@@ -3,15 +3,19 @@
 
   let ident_tbl = Hashtbl.create 63
 
+  let error = Error.error_str_lexbuf
+
   let _ = List.iter (fun (k, v) -> Hashtbl.add ident_tbl k v)
     ["handle", HANDLE; "do", DO; "with", WITH; "return", RETURN;
-     "effect", EFFECT; "fun", FUN; "data", DATA; "if", IF; "then", THEN;
-     "else", ELSE; "forall", FORALL; "case", CASE; "of", OF; "_", WILDCARD]
+     "eff", EFFECT; "fun", FUN; "type", TYPE; "if", IF; "then", THEN;
+     "else", ELSE; "forall", FORALL; "match", MATCH; "_", WILDCARD;
+     "mask", MASK; "let", LET; "in", IN; "inl", INL; "inr", INR; "end", END;
+     "val", VAL]
 }
 
 let digit = ['0'-'9']
 let id = ['a'-'z'] | ['A'-'Z'] | '_'
-let ident = id (digit | id)*
+let ident = id (digit | id | ''')*
 
 let blank_line = [' ' '\t' '\r']* ("//" [^'\n']*)? '\n'
 
@@ -22,8 +26,12 @@ rule lexer = parse
   | ident as s
     { match Hashtbl.find_opt ident_tbl s with
       | None -> IDENT s | Some t -> t }
+  | ('-'? ('0' | ['1'-'9'] digit*)) as s { INT (int_of_string s) }
   | '<' { LANGLE }
   | '>' { RANGLE }
+  | '+' { PLUS }
+  | '-' { MINUS }
+  | '*' { TIMES }
   | '[' { LSQUARE }
   | ']' { RSQUARE }
   | '{' { LCURLY }
@@ -39,6 +47,12 @@ rule lexer = parse
   | ':' { DCOL }
   | '=' { EQU }
   | '@' { AT }
-  | '1' { ONE }
+  | "()" { UNIT }
+  | _ as c { error lexbuf (Printf.sprintf "Unknown character : %c" c) }
 {
+  let lexer x =
+  (*
+  print_endline "ee";
+  *)
+  lexer x
 }

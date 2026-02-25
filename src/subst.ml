@@ -1,7 +1,6 @@
 open Syntax
 
 let rec pure_type s = function
-  | TUnit -> TUnit
   | TMod (m, t) -> TMod (pure_mod s m, pure_type s t)
   | TArr (t, t') -> TArr (pure_type s t, pure_type s t')
   | TSum (t, t') -> TSum (pure_type s t, pure_type s t')

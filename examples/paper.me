@@ -1,0 +1,12 @@
+eff gen a = yield : a => unit
+val id : []([gen int](unit -> unit) -> <gen int>(unit -> unit))
+let id f = f
+
+eff state s = get : unit => s | put : s => unit
+val state : [](<state int>(unit -> unit) -> int -> unit)
+let state m =
+  handle<state int> m () with
+  | return x => fun s -> x
+  | get x r => fun s -> r s s
+  | put s' r => fun s -> r () s'
+  end

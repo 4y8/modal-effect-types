@@ -2,9 +2,10 @@
  (modules lexer))
 (menhir
  (modules parser)
- (flags --explain --dump)
+ (flags --explain --dump --strict)
  (infer true))
 (executable
  (name met)
+ (preprocess (pps ppx_deriving.show))
  (libraries bindlib)
  (promote (until-clean)))

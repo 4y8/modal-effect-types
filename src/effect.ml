@@ -102,9 +102,9 @@ let rec meet_eff e e' = match e with
   | [] -> Some []
   | {eff_name; eff_type} as hd :: e ->
     match find_label_eff eff_name e' with
-    | None -> join_eff e e'
+    | None -> meet_eff e e'
     | Some ({eff_type = t; _}, e') when t = eff_type ->
-      Option.map (fun e -> hd :: e) (join_eff e e')
+      Option.map (fun e -> hd :: e) (meet_eff e e')
     | _ -> None
 
 let meet_mask l l' =
@@ -121,11 +121,10 @@ let meet_mask l l' =
 
 let join_mod m m' f = match m, m' with
   | MAbs e, MAbs e' -> Option.map (fun e -> MAbs e) (join_eff e e')
-  | MAbs e, MRel (l, d) ->
+  | MAbs e, MRel (l, d) | MRel (l, d), MAbs e ->
     if sub_eff e (d @ (remove_labels f l))
     then Some (MRel (l, d))
     else None
-  | _, MAbs _ -> None
   | MRel (l, d), MRel (l', d') ->
     match meet_eff d d' with
     | None -> None

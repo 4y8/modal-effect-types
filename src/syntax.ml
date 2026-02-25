@@ -1,9 +1,10 @@
-type loc = Lexing.position * Lexing.position
+type loc = (Lexing.position * Lexing.position) option
+let pp_loc _ _ = ()
 
 type surface_mdesc
   = SMAbs of surface_effect list
   | SMRel of (string * loc) list * surface_effect list
-and surface_mod = { smod : surface_mdesc ; loc : loc }
+and surface_mod = { smod : surface_mdesc ; mloc : loc }
 
 and surface_effect =
   { seff_name : string ;
@@ -15,32 +16,44 @@ and surface_tdsec
   | STVar of string
   | STSum of surface_type * surface_type
   | STProd of surface_type * surface_type
-  | STUnit
 and surface_type = { stype : surface_tdsec ; tloc : loc }
+[@@deriving show]
 
 type pattern = PVar of string
+[@@deriving show]
 
 type surface_desc
   = SDo of string * surface_expr
   | SVar of string
+  | SInt of int
   | SLam of string * surface_expr
   | SApp of surface_expr * surface_expr
   | SAnn of surface_expr * surface_type
-  | STApp of surface_expr * surface_type
+  | SInr of surface_expr
+  | SInl of surface_expr
+  | SSeq of surface_expr * surface_expr
+  | SUnit
+  | SLetP of string * string * surface_expr * surface_expr
+  | SPair of surface_expr * surface_expr
+  | SAppT of surface_expr * surface_type
   | SMask of surface_expr * (string * loc) list
   | SHand of surface_expr * surface_effect list * surface_handler
+  | SMatch of surface_expr * string * surface_expr * string * surface_expr
 and surface_expr = { sexpr : surface_desc ; loc : loc }
 
-and surface_handler = (string * pattern list * surface_expr) list *
-                      (string * surface_expr)
+and surface_handler = (string * loc * pattern * string * surface_expr) list *
+                      (pattern * surface_expr)
+[@@deriving show]
 
 type surface_decl
   = SDEff of string list * (string * (surface_type * surface_type)) list
   | SDSig of surface_type
   | SDFun of surface_expr
   | SDADT of string list * ((string * surface_type) list)
+[@@deriving show]
 
 type kind = Abs | Any | Effect
+[@@deriving show]
 
 type pure_mod
   = MAbs of effect_ctx
@@ -57,6 +70,7 @@ and pure_type
   | TVar of string * kind
   | TSum of pure_type * pure_type
   | TProd of pure_type * pure_type
-  | TUnit
+(*  | TForA of string * kind * pure_type *)
+[@@deriving show]
 
 type concrete_mod = pure_mod * effect_ctx

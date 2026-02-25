@@ -7,7 +7,7 @@ type ctx_binding
 
 type ctx = { gamma : ctx_binding list
            ; effects : (string * (string list * effect_ctx)) list
-           ; data : (string * (string list * pure_type)) list }
+           ; data : (string * string list * ((string * pure_type) list)) list }
 
 let rec get_kind gamma x = match gamma with
   | [] -> None
@@ -16,17 +16,10 @@ let rec get_kind gamma x = match gamma with
 
 (* Section 4.4 *)
 let rec is_abs = function
-  | TUnit -> true
-  | TMod (MAbs _, _) ->
-    true
-  | TMod (MRel _, a) ->
-    is_abs a
-  | TProd (a, b) ->
-    is_abs a &&
-    is_abs b
-  | TSum (a, b) ->
-    is_abs a &&
-    is_abs b
+  | TMod (MAbs _, _) -> true
+  | TMod (MRel _, a) -> is_abs a
+  | TProd (a, b) -> is_abs a && is_abs b
+  | TSum (a, b) -> is_abs a && is_abs b
   | TArr (_, _) -> false
   | TVar (_, k) -> k = Abs
 
@@ -36,12 +29,12 @@ let rec get_guarded = function
   | g -> Effect.id, g
 
 let across a nu f =
-  if is_abs a then a
+  if is_abs a then Some a
   else
     let mu, g = get_guarded a in
     match Effect.right_residual nu mu f with
-    | Some xi -> TMod (xi, g)
-    | _ -> failwith "internal error"
+    | Some xi -> Some (TMod (xi, g))
+    | _ -> None
 
 let rec locks e = function
   | [] -> Effect.id, e
@@ -57,5 +50,5 @@ let rec get_type_context gamma x = match gamma with
     Option.map (fun (a, gamma) -> a, hd :: gamma)
       (get_type_context tl x)
 
-let add_binding ({gamma; _} as ctx) b =
+let (<:) ({gamma; _} as ctx) b =
   {ctx with gamma = b :: gamma}

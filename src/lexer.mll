@@ -19,7 +19,7 @@ let id = digit | lower | cap | '''
 let ident = lower id*
 let mident = cap id*
 
-let blank_line = [' ' '\t' '\r']* ("//" [^'\n']*)? '\n'
+let blank_line = [' ' '\t' '\r']* ("--" [^'\n']*)? '\n'
 
 rule lexer = parse
   | eof { EOF }

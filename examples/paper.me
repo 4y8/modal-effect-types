@@ -1,7 +1,50 @@
-eff gen a = yield : a => unit
-val id : []([gen int](unit -> unit) -> <gen int>(unit -> unit))
-let id f = f
+type unit = Unit
+type int = Zero | Succ of int
+type list a = Nil | Cons of a, list a
+val iter : [](forall a . (a -> unit) -> list a -> unit)
+let iter f l =
+  match l with
+  | Nil -> ()
+  | Cons (hd, tl) -> f hd; iter @a f tl
+  end
+val append : [](forall a . list a -> list a -> list a)
+let append l l' =
+  match l with
+  | Nil -> l'
+  | Cons (hd, tl) -> Cons (hd, append @a tl l')
+  end
 
+
+-- section 2.3
+-- current error when omitting the modality : Cannot unbox function in application todo
+eff gen a = yield : a => unit
+val as_list : [](<gen int>(unit -> unit) -> list int)
+let as_list f =
+  handle<gen int> f () with
+  | return u => Nil
+  | yield x r => Cons (x, r ())
+  end
+
+-- section 2.4
+val id1 : []([gen int](unit -> unit) -> [gen int, gen unit](unit -> unit))
+let id1 f = f
+
+-- current error : Modality mismatch todo
+-- val id2 : [](<>(unit -> unit) -> <gen int>(unit -> unit))
+-- let id2 f = f
+
+val id3 : []([gen int](unit -> unit) -> <gen int>(unit -> unit))
+let id3 f = f
+
+-- current error : Cannot access variable todo
+-- val id4 : [](<gen int>(unit -> unit) -> [gen int](unit -> unit))
+-- let id4 f = f
+
+-- current error : Cannot unbox function in application todo
+-- val app2 : [](<gen int>(unit -> unit) -> unit)
+-- let app2 f = f ()
+
+-- section 2.5
 eff state s = get : unit => s | put : s => unit
 val state : [](<state int>(unit -> unit) -> int -> unit)
 let state m =
@@ -9,4 +52,33 @@ let state m =
   | return x => fun s -> x
   | get x r => fun s -> r s s
   | put s' r => fun s -> r () s'
+  end
+
+val plus : [](int -> int -> int)
+
+val prefix_sum : [gen int, state int](list int -> unit)
+let prefix_sum l =
+  iter @int (fun x -> do put (plus x (do get ())); do yield (do get ())) l
+
+-- section 2.6
+type bool = True | False
+eff coop = ufork : unit => bool | suspend : unit => unit
+type proc = Proc of list proc -> unit
+
+val push : [](proc -> list proc -> list proc)
+let push x xs = append @proc xs (Cons (x, Nil))
+
+val next : [](list proc -> unit)
+let next ps =
+  match ps with
+  | Nil -> ()
+  | Cons (Proc (p), ps') -> p ps'
+  end
+
+val schedule : [](<coop>(unit -> unit) -> list proc -> unit)
+let schedule m =
+  handle<coop> m () with
+  | return u => fun ps -> next ps
+  | suspend u r => fun ps -> next (push (Proc (fun ps' -> r () ps')) ps)
+  | ufork u r => fun ps -> r True (push (Proc (fun ps' -> r False ps')) ps)
   end

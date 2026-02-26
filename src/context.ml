@@ -7,7 +7,7 @@ type ctx_binding
 
 type ctx = { gamma : ctx_binding list
            ; effects : (string * (string list * effect_ctx)) list
-           ; data : (string * string list * ((string * pure_type) list)) list }
+           ; data : (string * (string list * (string * pure_type list) list)) list }
 
 let rec get_kind gamma x = match gamma with
   | [] -> None
@@ -19,9 +19,10 @@ let rec is_abs = function
   | TMod (MAbs _, _) -> true
   | TMod (MRel _, a) -> is_abs a
   | TProd (a, b) -> is_abs a && is_abs b
-  | TSum (a, b) -> is_abs a && is_abs b
   | TArr (_, _) -> false
   | TVar (_, k) -> k = Abs
+  | TForA (_, _, t) -> is_abs t
+  | TCons (_, l) -> List.for_all is_abs l
 
 let rec get_guarded = function
   | TMod (mu, t) -> let nu, g = get_guarded t in

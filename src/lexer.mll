@@ -8,14 +8,16 @@
   let _ = List.iter (fun (k, v) -> Hashtbl.add ident_tbl k v)
     ["handle", HANDLE; "do", DO; "with", WITH; "return", RETURN;
      "eff", EFFECT; "fun", FUN; "type", TYPE; "if", IF; "then", THEN;
-     "else", ELSE; "forall", FORALL; "match", MATCH; "_", WILDCARD;
-     "mask", MASK; "let", LET; "in", IN; "inl", INL; "inr", INR; "end", END;
-     "val", VAL]
+     "else", ELSE; "forall", FORALL; "match", MATCH; "_", WILDCARD; "of", OF;
+     "mask", MASK; "let", LET; "in", IN; "end", END; "val", VAL]
 }
 
 let digit = ['0'-'9']
-let id = ['a'-'z'] | ['A'-'Z'] | '_'
-let ident = id (digit | id | ''')*
+let lower = ['a'-'z'] | '_'
+let cap = ['A'-'Z']
+let id = digit | lower | cap | '''
+let ident = lower id*
+let mident = cap id*
 
 let blank_line = [' ' '\t' '\r']* ("//" [^'\n']*)? '\n'
 
@@ -26,6 +28,7 @@ rule lexer = parse
   | ident as s
     { match Hashtbl.find_opt ident_tbl s with
       | None -> IDENT s | Some t -> t }
+  | mident as s { MIDENT s }
   | ('-'? ('0' | ['1'-'9'] digit*)) as s { INT (int_of_string s) }
   | '<' { LANGLE }
   | '>' { RANGLE }
@@ -45,6 +48,7 @@ rule lexer = parse
   | "=>" { DARROW }
   | '.' { DOT }
   | ':' { DCOL }
+  | ';' { SCOL }
   | '=' { EQU }
   | '@' { AT }
   | "()" { UNIT }

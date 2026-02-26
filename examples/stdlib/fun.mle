@@ -1,0 +1,5 @@
+val id : forall a . a -> a
+let id x = x
+
+val const : forall a b . a -> b -> a
+let const x y = x

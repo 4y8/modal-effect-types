@@ -1,0 +1,17 @@
+type list a = Nil | Cons of a, list a
+
+type unit = Unit
+
+val map : [](forall a b . (a -> b) -> list a -> list b)
+let map f l =
+  match l with
+  | Nil -> Nil
+  | Cons (hd, tl) -> Cons (f hd, map @a @b f tl)
+  end
+
+val iter : [](forall a . (a -> unit) -> list a -> unit)
+let iter f l =
+  match l with
+  | Nil -> ()
+  | Cons (hd, tl) -> f hd; iter @a f tl
+  end

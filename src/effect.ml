@@ -71,15 +71,23 @@ let rec sub_eff e f =
     match find_label_eff eff_name f with
     | None -> false
     | Some ({eff_type = t'; _}, f') -> eff_type = t' && sub_eff tl f'
-        
+
 let (===) e f = sub_eff e f && sub_eff f e
 
 (* from wenhao's implementation : mu f => nu f *)
 let sub_mod mu nu f = match mu, nu with
-  | MAbs e, _ -> sub_eff e (apply_mod nu f)
+  | MAbs e, _ ->
+    sub_eff e (apply_mod nu f)
   | MRel (l1, d1), MRel (l2, d2) ->
+    print_endline (show_pure_mod mu);
+    print_endline (show_pure_mod nu);
     let l, d = l1 >< d1 in
     let l', d' = l2 >< d2 in
+    print_int (List.length l1);
+    print_endline "lhjkhlh";
+    List.iter (Fun.compose print_endline show_pure_effect) d;
+    print_endline "ddddd";
+    List.iter (Fun.compose print_endline show_pure_effect) d';
     List.sort compare l = List.sort compare l' && d === d' &&
     extract f l1 <> None && extract f l2 <> None
   | _, _ -> false

@@ -15,7 +15,7 @@
 let digit = ['0'-'9']
 let lower = ['a'-'z'] | '_'
 let cap = ['A'-'Z']
-let id = digit | lower | cap | '''
+let id = digit | lower | cap | ''' | '.'
 let ident = lower id*
 let mident = cap id*
 

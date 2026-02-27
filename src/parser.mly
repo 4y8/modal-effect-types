@@ -1,11 +1,29 @@
 %{
 open Syntax
 
+let fresh_name =
+  let k = ref 0 in
+  fun () -> (incr k; Printf.sprintf "x%d" !k)
+
 let wrap_lam =
   List.fold_right (fun (x, loc) e -> { loc; sexpr = SLam (x, e) })
 
 let wrap_type =
   List.fold_right (fun (x, k, tloc) t -> { tloc; stype = STForA (x, k, t) })
+
+let wrap_ann e t = { sexpr = SAnn (e, t); loc = e.loc }
+
+let wrap_let x m n = SLet (x, m, n)
+
+let bool = { stype = STCons ("bool", []); tloc = None }
+
+let wrap_if c t f loc =
+  let x = fresh_name () in
+  wrap_let x (wrap_ann c bool)
+    { sexpr = SMatch ({sexpr = SVar x; loc = c.loc},
+          [{spat = SPCons ("True", []); ploc = None}, t;
+           {spat = SPCons ("False", []); ploc = None}, f;])
+      ; loc = Some loc }
 %}
 
 %token EOF
@@ -19,7 +37,9 @@ let wrap_type =
 %token COMMA PIPE ARROW DARROW DOT DCOL EQU WILDCARD AT SCOL
 %token UNIT
 
+%left EQU
 %right ARROW
+%left PLUS MINUS
 %left TIMES
 
 %type <((string * surface_decl) * loc) list> file
@@ -114,26 +134,42 @@ let app_expr :=
     | ~ = app_expr; ~ = single_cons; <SApp>
     | ~ = app_expr; AT; ~ = atom_type; <SAppT>)
 
-let pair_expr :=
+let op ==
+  | loc_expr( | EQU; { SVar "=" }
+              | PLUS; { SVar "+" }
+              | MINUS; { SVar "-" }
+              | TIMES; { SVar "*" })
+
+let op_expr :=
   | ~ = app_expr; <>
   | ~ = single_cons; <>
-  | loc_expr( | LPAR; ~ = pair_expr; COMMA; ~ = app_expr; RPAR; <SPair>)
+  | loc_expr( | l = op_expr; o = op; r = op_expr;
+              { SApp ({sexpr = SApp (o, l); loc = l.loc }, r) } )
+
+let pair_expr :=
+  | ~ = op_expr; <>
+  | loc_expr( | LPAR; ~ = pair_expr; COMMA; ~ = op_expr; RPAR; <SPair>)
 
 let do_expr :=
   | ~ = pair_expr; <>
   | loc_expr(
     | DO; ~ = IDENT; ~ = do_expr; <SDo>)
 
-let seq_expr :=
+let if_expr :=
   | ~ = do_expr; <>
-  | loc_expr( | ~ = do_expr; SCOL; ~ = sexpr; <SSeq> )
+  | loc_expr(
+    | IF; c = sexpr; THEN; t = sexpr; ELSE; f = if_expr;
+      { wrap_if c t f ($startpos, $endpos) })
+
+let seq_expr :=
+  | ~ = if_expr; <>
+  | loc_expr( | ~ = if_expr; SCOL; ~ = sexpr; <SSeq> )
 
 let sexpr :=
   | ~ = seq_expr; <>
   | loc_expr(
     | LET; x = IDENT; DCOL; t = stype; EQU; m = sexpr; IN; n = sexpr;
-    { SMatch ({ sexpr = SAnn (m, t); loc = m.loc },
-              [{spat = SPVar x ; ploc = None}, n]) }
+    { SMatch (wrap_ann m t, [{spat = SPVar x ; ploc = None}, n]) }
     | LET; x = IDENT; EQU; m = sexpr; IN; n = sexpr;
     { SMatch (m, [{spat = SPVar x ; ploc = None}, n]) }
     | FUN; ~ = IDENT; ARROW; ~ = sexpr; <SLam>)

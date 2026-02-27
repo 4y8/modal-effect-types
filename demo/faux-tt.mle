@@ -1,0 +1,81 @@
+-- stdlib : list ---------------------------------------------------------------
+
+type list a = Nil | Cons of a, list a
+
+-- stdlib : option -------------------------------------------------------------
+
+type option a = None | Some of a
+
+val option.map : forall a b . (a -> b) -> option a -> option b
+let option.map f o =
+  match o with
+  | None -> None
+  | Some (x) -> Some (f x)
+  end
+
+-- stdlib : bool ---------------------------------------------------------------
+
+type bool = True | False
+
+-- stdlib : unit ---------------------------------------------------------------
+
+type unit = Unit
+
+-- TT --------------------------------------------------------------------------
+
+type tm
+  = Var of int
+  | Lam of tm, tm
+  | App of tm, tm
+  | Type
+  | Pi of tm, tm
+--  | Meta of int
+
+-- context ---------------------------------------------------------------------
+
+eff context
+  = lookup_var : int => tm
+--  | lookup_meta : int => (option tm * tm)
+--  | fresh_meta : tm => tm
+--  | set_meta : int * tm => bool
+
+eff error a
+  = unknown_var : int => a
+
+-- question : why can't the internal function have modality <context, error>
+-- instead of <context> ?
+
+val with_bind : forall [a] . [context](int -> tm -> <context>(unit -> a) -> a)
+let with_bind x t c =
+  handle<context> c () with
+  | return v => v
+  | lookup_var y k =>
+    if y = x then
+      k t
+    else
+      k (do lookup_var y)
+  end
+
+val with_empty_ctx : forall [a] . [error a](<context>(unit -> a) -> a)
+let with_empty_ctx c =
+  handle<context> c () with
+  | return v => v
+  | lookup_var y k => do unknown_var y
+  end
+
+-- norm ------------------------------------------------------------------------
+
+type head
+  = HVar of int
+  | HMeta of int
+
+type value
+  = VType
+  | VPi of tm, tm
+  | VLam of tm, tm
+  | VSpine of head, list tm
+
+val norm_tm : [context](tm -> tm)
+let norm_tm
+
+-- val whnf : []()

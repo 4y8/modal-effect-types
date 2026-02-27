@@ -6,9 +6,7 @@ let unknown_eff loc x = Error.error_str loc ("Unknown effect " ^ x)
 let unknown_cons loc c t = Error.error loc (fun fmt -> Format.fprintf fmt
         "Unknown constructor %s of type %s" c t)
 
-let type_mismatch loc t t' =
-  print_endline (show_pure_type t);
-  print_endline (show_pure_type t');
+let type_mismatch loc _ _ =
   Error.error_str loc "Type mismatch todo"
 
 let expected_arr loc _ = Error.error_str loc "Expected function type todo"
@@ -155,7 +153,8 @@ let join_type loc f t t' =
     | None -> mod_mismatch loc mu nu g
     | Some lam -> TMod (lam, g)
 
-let rec check ctx ({loc; sexpr} as m) a e = match sexpr with
+let rec check ctx ({loc; sexpr} as m) a e =
+  match sexpr with
   (* B-Mod *)
   | v when is_val v && is_mod a ->
     begin match a with
@@ -213,6 +212,9 @@ let rec check ctx ({loc; sexpr} as m) a e = match sexpr with
           nb_arg_mismatch loc c cargs l;
         List.iter2 (fun n b -> check ctx n b e) l cargs
   end
+  | SLet (x, m, n) ->
+    let t = infer ctx m e in
+    check (ctx <: BVar (x, t)) n a e
   (* B-Switch *)
   | _ ->
     let mu, g = get_guarded (infer ctx m e) in
@@ -229,6 +231,7 @@ and infer ctx {loc; sexpr} e = match sexpr with
       | None -> unknown_var loc x
       | Some (a, gamma') ->
         let nu, f = locks e gamma' in
+        print_endline (show_pure_mod nu);
         match across a nu f with
         | None -> no_access loc x ctx e
         | Some t -> t
@@ -296,6 +299,9 @@ and infer ctx {loc; sexpr} e = match sexpr with
   | SSeq (m, n) ->
     let _ = check ctx m (TVar ("unit", Abs)) e in
     infer ctx n e
+  | SLet (x, m, n) ->
+    let t = infer ctx m e in
+    infer (ctx <: BVar (x, t)) n e
   | _ -> failwith "todo"
 
 let check_decl ctx d = match d with
@@ -324,5 +330,13 @@ let check_decl ctx d = match d with
     { ctx with data = (x, (args, l)) :: ctx.data }
 
 let check_prog =
-  let init_ctx = { gamma = [] ; effects = [] ; data = [] } in
+  let int = TCons ("int", []) in
+  let bool = TCons ("bool", []) in
+  let (@->) t t' = TArr (t, t') in
+  let init_ctx = { gamma = [BVar ("+", TMod (MAbs [], int @-> int @-> int));
+                            BVar ("*", TMod (MAbs [], int @-> int @-> int));
+                            BVar ("-", TMod (MAbs [], int @-> int @-> int));
+                            BVar ("=", TMod (MAbs [], int @-> int @-> bool));]
+                 ; effects = []
+                 ; data = ["int", ([], []); ] } in
   List.fold_left check_decl init_ctx

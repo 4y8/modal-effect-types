@@ -38,6 +38,7 @@ type surface_desc
   | SApp of surface_expr * surface_expr
   | SAnn of surface_expr * surface_type
   | SSeq of surface_expr * surface_expr
+  | SLet of string * surface_expr * surface_expr
   | SUnit
   | SPair of surface_expr * surface_expr
   | SAppT of surface_expr * surface_type

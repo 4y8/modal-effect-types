@@ -13,17 +13,19 @@ let wrap_type =
 
 let wrap_ann e t = { sexpr = SAnn (e, t); loc = e.loc }
 
-let wrap_let x m n = SLet (x, m, n)
-
 let bool = { stype = STCons ("bool", []); tloc = None }
 
 let wrap_if c t f loc =
   let x = fresh_name () in
-  wrap_let x (wrap_ann c bool)
+  SLet (x, (wrap_ann c bool),
     { sexpr = SMatch ({sexpr = SVar x; loc = c.loc},
           [{spat = SPCons ("True", []); ploc = None}, t;
            {spat = SPCons ("False", []); ploc = None}, f;])
-      ; loc = Some loc }
+      ; loc = Some loc })
+
+let wrap_let_pat (p, m, n) =
+  let x = fresh_name () in
+  SLet (x, m, { sexpr = SMatch ({sexpr = SVar x; loc = p.ploc}, [p, n]) ; loc = p.ploc})
 
 let stprod (a, b) = STCons ("pair", [a; b])
 let spair (a, b) = SCons ("Pair", [a; b])
@@ -35,11 +37,12 @@ let spair (a, b) = SCons ("Pair", [a; b])
 %token <int> INT
 %token HANDLE DO WITH RETURN EFFECT FUN TYPE IF THEN ELSE FORALL MATCH MASK LET
 %token IN END VAL OF
-%token PLUS MINUS TIMES
+%token PLUS MINUS TIMES AND
 %token LANGLE RANGLE LSQUARE RSQUARE LCURLY RCURLY LPAR RPAR
 %token COMMA PIPE ARROW DARROW DOT DCOL EQU WILDCARD AT SCOL
 %token UNIT
 
+%left AND
 %left EQU
 %right ARROW
 %left PLUS MINUS
@@ -69,6 +72,8 @@ let smod :=
 let atom_type :=
   | LPAR; ~ = stype; RPAR; <>
   | loc_type (
+    | LCURLY; t = stype; RCURLY;
+    { STArr ({stype = STCons ("unit", []); tloc = None}, t) }
     | ~ = IDENT; <STVar>
     | ~ = smod; ~ = atom_type; <STMod>)
 
@@ -97,9 +102,15 @@ let stype :=
 let loc_expr(expr) ==
   sexpr = expr; { { sexpr; loc = Some ($startpos, $endpos) } }
 
+let pattern_list :=
+  | ~ = pattern; <>
+  | l = pattern_list; COMMA; p = pattern;
+    { { spat = SPCons ("Pair", [l; p]); ploc = Some ($startpos, $endpos) } }
+
 let pattern :=
-  | LPAR; ~ = pattern; RPAR; <>
+  | LPAR; ~ = pattern_list; RPAR; <>
   | p = midrule(
+        | UNIT; { SPCons ("Unit", []) }
         | WILDCARD; { SPWild }
         | ~ = IDENT; <SPVar>
         | ~ = MIDENT; LPAR; ~ = separated_list(COMMA, pattern); RPAR; <SPCons>
@@ -113,11 +124,12 @@ let handle_clause :=
     { (fst l, snd l, p, r, n) }
 
 let match_clause :=
-  | PIPE; ~ = pattern; ARROW; ~ = sexpr; <>
+  | PIPE; ~ = pattern_list; ARROW; ~ = sexpr; <>
 
 let atom_expr :=
  | LPAR; ~ = sexpr; RPAR; <>
  | loc_expr(
+   | LCURLY; e = sexpr; RCURLY; { SLam ("", e) }
    | ~ = IDENT; <SVar>
    | ~ = INT; <SInt>
    | UNIT; { SCons ("Unit", []) }
@@ -141,6 +153,7 @@ let op ==
   | loc_expr( | EQU; { SVar "=" }
               | PLUS; { SVar "+" }
               | MINUS; { SVar "-" }
+              | AND; { SVar "&&" }
               | TIMES; { SVar "*" })
 
 let op_expr :=
@@ -149,17 +162,17 @@ let op_expr :=
   | loc_expr( | l = op_expr; o = op; r = op_expr;
               { SApp ({sexpr = SApp (o, l); loc = l.loc }, r) } )
 
-let pair_expr :=
-  | ~ = op_expr; <>
-  | loc_expr( | LPAR; ~ = pair_expr; COMMA; ~ = op_expr; RPAR; <spair>)
-
 let do_expr :=
-  | ~ = pair_expr; <>
+  | ~ = op_expr; <>
   | loc_expr(
-    | DO; ~ = IDENT; ~ = do_expr; <SDo>)
+    | DO; ~ = IDENT; ~ = if_expr; <SDo>)
+
+let pair_expr :=
+  | ~ = do_expr; <>
+  | loc_expr( | LPAR; l = pair_expr; COMMA; r = pair_expr; RPAR; <spair>)
 
 let if_expr :=
-  | ~ = do_expr; <>
+  | ~ = pair_expr; <>
   | loc_expr(
     | IF; c = sexpr; THEN; t = sexpr; ELSE; f = if_expr;
       { wrap_if c t f ($startpos, $endpos) })
@@ -171,10 +184,9 @@ let seq_expr :=
 let sexpr :=
   | ~ = seq_expr; <>
   | loc_expr(
-    | LET; x = IDENT; DCOL; t = stype; EQU; m = sexpr; IN; n = sexpr;
-    { SMatch (wrap_ann m t, [{spat = SPVar x ; ploc = None}, n]) }
-    | LET; x = IDENT; EQU; m = sexpr; IN; n = sexpr;
-    { SMatch (m, [{spat = SPVar x ; ploc = None}, n]) }
+    | LET; p = pattern_list; DCOL; t = stype; EQU; m = sexpr; IN; n = sexpr;
+    { wrap_let_pat (p, wrap_ann m t, n) }
+    | LET; p = pattern_list; EQU; m = sexpr; IN; n = sexpr; <wrap_let_pat>
     | FUN; ~ = IDENT; ARROW; ~ = sexpr; <SLam>)
 
 eff:

@@ -2,6 +2,10 @@
 
 type list a = Nil | Cons of a, list a
 
+-- stdlib : pair ---------------------------------------------------------------
+
+type pair a b = Pair of a, b
+
 -- stdlib : option -------------------------------------------------------------
 
 type option a = None | Some of a
@@ -21,15 +25,37 @@ type bool = True | False
 
 type unit = Unit
 
+-- surface ---------------------------------------------------------------------
+
+type surface
+  = SVar of int
+  | SLam of int, option surface, surface
+  | SApp of surface, surface
+  | SType
+  | SPi of int, surface, surface
+  | SAs of surface, surface
+
 -- TT --------------------------------------------------------------------------
 
 type tm
   = Var of int
-  | Lam of tm, tm
+  | Lam of int, tm, tm
   | App of tm, tm
   | Type
-  | Pi of tm, tm
+  | Pi of int, tm, tm
 --  | Meta of int
+
+-- value -----------------------------------------------------------------------
+
+type head
+  = HVar of int
+  -- | HMeta of int
+
+type value
+  = VType
+  | VPi of int, tm, tm
+  | VLam of int, tm, tm
+  | VSpine of head, list tm
 
 -- context ---------------------------------------------------------------------
 
@@ -39,13 +65,19 @@ eff context
 --  | fresh_meta : tm => tm
 --  | set_meta : int * tm => bool
 
-eff error a
-  = unknown_var : int => a
+eff state
+  = fresh_var : unit => int
+
+eff error
+  = unknown_var : int => forall [a] . a
+  | cannot_infer_arg : int => forall [a] . a
+  | expected_fun : value => forall [a] . a
+  | type_mismatch : tm * tm => forall [a] . a
 
 -- question : why can't the internal function have modality <context, error>
 -- instead of <context> ?
 
-val with_bind : forall [a] . [context](int -> tm -> <context>(unit -> a) -> a)
+val with_bind : forall [a] . [context](int -> tm -> <context>{a} -> a)
 let with_bind x t c =
   handle<context> c () with
   | return v => v
@@ -56,26 +88,174 @@ let with_bind x t c =
       k (do lookup_var y)
   end
 
-val with_empty_ctx : forall [a] . [error a](<context>(unit -> a) -> a)
+val with_empty_ctx : forall [a] . [error](<context>{a} -> a)
 let with_empty_ctx c =
   handle<context> c () with
   | return v => v
-  | lookup_var y k => do unknown_var y
+  | lookup_var y k => (do unknown_var y) @ a
   end
+
+-- subst -----------------------------------------------------------------------
+
+val lookup : [](int -> list (int * tm) -> option tm)
+let lookup x l =
+  match l with
+  | Nil -> None
+  | Cons ((y, m), tl) ->
+    if x = y then Some (m) else lookup x tl
+  end
+
+val subst : [state](list (int * tm) -> tm -> tm)
+let subst s m =
+  match m with
+  | Var (x) ->
+    match lookup x s with
+    | None -> m
+    | Some (n) -> n
+    end
+  | Lam (x, t, m) ->
+    let y = do fresh_var () in
+    Lam (y, subst s t, subst (Cons ((x, Var (y)), s)) m)
+  | Type -> Type
+  | Pi (x, t, m) ->
+    let y = do fresh_var () in
+    Pi (y, subst s t, subst (Cons ((x, Var (y)), s)) m)
+  end
+
+val subst_single : [state](int -> tm -> tm -> tm)
+let subst_single x m =
+  subst (Cons ((x, m), Nil))
 
 -- norm ------------------------------------------------------------------------
 
-type head
-  = HVar of int
-  | HMeta of int
+val norm_tm' : [state](tm -> tm)
+let norm_tm' m =
+  match m with
+  | Type -> Type
+  | Var (_) -> m
+  | Pi (_, _, _) -> m
+  | Lam (_, _, _) -> m
+  | App (m, n) ->
+    match norm_tm' m with
+    | Lam (x, _, e) -> norm_tm' (subst_single x n e)
+    | e -> App (e, n)
+    end
+  end
 
-type value
-  = VType
-  | VPi of tm, tm
-  | VLam of tm, tm
-  | VSpine of head, list tm
+val fold_spine : (tm -> list tm -> head * list tm)
+let fold_spine m sp =
+  match m with
+  | Var (x) -> (HVar (x), sp)
+  | App (m, n) -> fold_spine m (Cons (n, sp))
+  end
 
-val norm_tm : [context](tm -> tm)
-let norm_tm
+val norm_tm : [state](tm -> value)
+let norm_tm e =
+  match norm_tm' e with
+  | Type -> VType
+  | Pi (x, t, t') -> VPi (x, t, t')
+  | Lam (x, t, m) -> VLam (x, t, m)
+  | m ->
+    let (h, sp) = fold_spine m Nil in
+    VSpine (h, sp)
+  end
 
--- val whnf : []()
+-- equal -----------------------------------------------------------------------
+
+val equal_at : [state, context](tm -> tm -> tm -> bool)
+val equal_tm : [state, context](tm -> tm -> bool)
+val equal_sp : [state, context](head -> list tm -> head -> list tm -> bool)
+val equal_sp_fold : [state, context](tm -> list tm -> list tm -> bool)
+
+let equal_at m n t =
+  match norm_tm t with
+  | VPi (x, t, u) ->
+    with_bind @bool x t {equal_at (App (m, Var (x))) (App (n, Var (x))) u}
+  | VSpine (_, _) -> equal_tm m n
+  | VType -> equal_tm m n
+  end
+
+let equal_tm m n =
+  let p : (value * value) = (norm_tm m, norm_tm n) in
+  match p with
+  | VType, VType -> True
+  | VPi (x, t, u), VPi (x', t', u') ->
+    equal_at t t' Type &&
+    with_bind @bool x t {equal_at u (subst_single x' (Var (x)) u') Type}
+  | VSpine (hd, sp), VSpine (hd', sp') ->
+    equal_sp hd sp hd' sp'
+  | _, _ -> False
+  end
+
+val equal_hd : head -> head -> bool
+let equal_hd hd hd' =
+  let p : head * head = (hd, hd') in
+  match p with
+  | HVar (x), HVar (x') -> x = x'
+  end
+
+let equal_sp_fold t sp sp' =
+  let p : list tm * list tm = (sp, sp') in
+  match p with
+  | Nil, Nil -> True
+  | Nil, _ -> False
+  | _, Nil -> False
+  | Cons (m, sp), Cons (m', sp') ->
+    match norm_tm t with
+    | VPi (x, t, u) ->
+      equal_at m m' t && equal_sp_fold (subst_single x m u) sp sp'
+    | _ -> False
+    end
+  end
+
+let equal_sp h sp h' sp' =
+  equal_hd h h' &&
+  match h with
+  | HVar (x) -> equal_sp_fold (do lookup_var x) sp sp'
+  end
+
+-- typecheck -------------------------------------------------------------------
+
+val infer : [context, state, error](surface -> tm * tm)
+val check : [context, state, error](surface -> tm -> tm)
+
+let infer e =
+  match e with
+  | SType -> (Type, Type)
+  | SVar (x) -> (Var (x), do lookup_var x)
+  | SPi (x, t, u) ->
+    let t = check t Type in
+    with_bind @(tm * tm) x t {(Pi (x, t, check u Type), Type)}
+  | SLam (x, Some (t), e) ->
+    let t = check t Type in
+    with_bind @(tm * tm) x t {let (e, u) = infer e in
+                              (Lam (x, t, e), Pi (x, t, u))}
+  | SLam (x, None, _) -> (do cannot_infer_arg x) @ (tm * tm)
+  | SAs (m, t) ->
+    let t = check t Type in
+    (check m t, t)
+  | SApp (m, n) ->
+    let (m, t) = infer m in
+    match norm_tm t with
+    | VPi (x, t, u) ->
+      let n = check n u in
+      (App (m, n), subst_single x n u)
+    | t -> (do expected_fun t) @ (tm * tm)
+    end
+  end
+
+let check e t =
+  match e with
+  | SLam (x, None, m) ->
+    match norm_tm t with
+    | VPi (x, t, u) ->
+      Lam (x, t, check m u)
+    | t -> (do expected_fun t) @ tm
+    end
+  | _ ->
+    let e, t' = infer e in
+    if equal_at t t' Type then
+      e
+    else
+      (do type_mismatch (t, t')) @ tm
+  end

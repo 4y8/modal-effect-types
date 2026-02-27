@@ -180,8 +180,8 @@ let rec check ctx ({loc; sexpr} as m) a e =
     List.iter check_clause l
   (* B-CrispSumCheck and B-CrispPairCheck *)
   | SMatch (v, l) ->
-    if not (is_val v.sexpr) then
-      expected_val v.loc v;
+    (*if not (is_val v.sexpr) then
+       expected_val v.loc v;*)
     let t = infer ctx v e in
     List.iter (fun (p, n) ->
         let ctx = split_pat ctx Effect.id t p in
@@ -220,7 +220,6 @@ and infer ctx {loc; sexpr} e = match sexpr with
       | None -> unknown_var loc x
       | Some (a, gamma') ->
         let nu, f = locks e gamma' in
-        print_endline (show_pure_mod nu);
         match across a nu f with
         | None -> no_access loc x ctx e
         | Some t -> t
@@ -320,7 +319,9 @@ let check_prog =
   let init_ctx = { gamma = [BVar ("+", TMod (MAbs [], int @-> int @-> int));
                             BVar ("*", TMod (MAbs [], int @-> int @-> int));
                             BVar ("-", TMod (MAbs [], int @-> int @-> int));
-                            BVar ("=", TMod (MAbs [], int @-> int @-> bool));]
+                            BVar ("=", TMod (MAbs [], int @-> int @-> bool));
+                            BVar ("&&", TMod (MAbs [], bool @-> bool @-> bool));
+                           ]
                  ; effects = []
                  ; data = ["int", ([], []); ] } in
   List.fold_left check_decl init_ctx

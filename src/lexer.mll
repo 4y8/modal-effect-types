@@ -51,6 +51,7 @@ rule lexer = parse
   | ';' { SCOL }
   | '=' { EQU }
   | '@' { AT }
+  | "&&" { AND }
   | "()" { UNIT }
   | _ as c { error lexbuf (Printf.sprintf "Unknown character : %c" c) }
 {

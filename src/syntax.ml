@@ -23,9 +23,6 @@ and surface_tdsec
 and surface_type = { stype : surface_tdsec ; tloc : loc }
 [@@deriving show]
 
-type pattern = PVar of string
-[@@deriving show]
-
 type surface_pdesc
   = SPVar of string
   | SPCons of string * surface_pat list
@@ -42,7 +39,6 @@ type surface_desc
   | SAnn of surface_expr * surface_type
   | SSeq of surface_expr * surface_expr
   | SUnit
-  | SLetP of string * string * surface_expr * surface_expr
   | SPair of surface_expr * surface_expr
   | SAppT of surface_expr * surface_type
   | SMask of surface_expr * (string * loc) list
@@ -51,8 +47,8 @@ type surface_desc
   | SMatch of surface_expr * (surface_pat * surface_expr) list
 and surface_expr = { sexpr : surface_desc ; loc : loc }
 
-and surface_handler = (string * loc * pattern * string * surface_expr) list *
-                      (pattern * surface_expr)
+and surface_handler = (string * loc * string * string * surface_expr) list *
+                      (string * surface_expr)
 [@@deriving show]
 
 type surface_decl

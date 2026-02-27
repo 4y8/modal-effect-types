@@ -6,7 +6,10 @@ let unknown_eff loc x = Error.error_str loc ("Unknown effect " ^ x)
 let unknown_cons loc c t = Error.error loc (fun fmt -> Format.fprintf fmt
         "Unknown constructor %s of type %s" c t)
 
-let type_mismatch loc _ _ = Error.error_str loc "Type mismatch todo"
+let type_mismatch loc t t' =
+  print_endline (show_pure_type t);
+  print_endline (show_pure_type t');
+  Error.error_str loc "Type mismatch todo"
 
 let expected_arr loc _ = Error.error_str loc "Expected function type todo"
 let expected_prod loc _ = Error.error_str loc "Expected product type todo"
@@ -169,12 +172,12 @@ let rec check ctx ({loc; sexpr} as m) a e = match sexpr with
     let (a, b) = split_arr loc a in
     check (ctx <: BVar (x, a)) m b e
   (* B-HandlerCheck *)
-  | SHand (m, d, (l, (PVar x, n))) ->
+  | SHand (m, d, (l, (x, n))) ->
     let b = a in (* stay consistent with the paper *)
     let d = check_effect_ctx ctx d in
     let a = infer (ctx <: Lock (MRel ([], d), e)) m (d @ e) in
     check (ctx <: BVar (x, TMod (MRel ([], d), a))) n b e;
-    let check_clause (li, loc, PVar pi, ri, ni) =
+    let check_clause (li, loc, pi, ri, ni) =
       match Effect.get_eff li d with
       | None -> unknown_eff loc li
       | Some (ai, bi) ->
@@ -187,16 +190,7 @@ let rec check ctx ({loc; sexpr} as m) a e = match sexpr with
     let a, b = split_prod loc a in
     check ctx m a e;
     check ctx n b e
-  (* B-CrispPairCheck *)
-  | SLetP (x, y, v, m) ->
-    let a' = a in
-    if not (is_val v.sexpr) then
-      expected_val v.loc v;
-    let mu, g = get_guarded (infer ctx v e) in
-    let a, b = split_prod v.loc g in
-    let ctx = ctx <: BVar (x, TMod (mu, a)) <: BVar (y, TMod (mu, b)) in
-    check ctx m a' e
-  (* B-CrispSumCheck *)
+  (* B-CrispSumCheck and B-CrispPairCheck *)
   | SMatch (v, l) ->
     if not (is_val v.sexpr) then
       expected_val v.loc v;
@@ -271,11 +265,11 @@ and infer ctx {loc; sexpr} e = match sexpr with
     check ctx m a e;
     b
   (* B-HandlerInfer *)
-  | SHand (m, d, (l, (PVar x, n))) ->
+  | SHand (m, d, (l, (x, n))) ->
     let d = check_effect_ctx ctx d in
     let a = infer (ctx <: Lock (MRel ([], d), e)) m (d @ e) in
     let b' = infer (ctx <: BVar (x, TMod (MRel ([], d), a))) n e in
-    let infer_clause (li, loc, PVar pi, ri, ni) =
+    let infer_clause (li, loc, pi, ri, ni) =
       match Effect.get_eff li d with
       | None -> unknown_eff loc li
       | Some (ai, bi) ->
@@ -286,15 +280,7 @@ and infer ctx {loc; sexpr} e = match sexpr with
     List.fold_left (join_type loc e) b' bi
   | SUnit -> TCons ("unit", [])
   | SInt _ -> TCons ("int", [])
-  (* B-CrispPairInfer *)
-  | SLetP (x, y, v, m) ->
-    if not (is_val v.sexpr) then
-      expected_val v.loc v;
-    let mu, g = get_guarded (infer ctx v e) in
-    let a, b = split_prod v.loc g in
-    let ctx = ctx <: BVar (x, TMod (mu, a)) <: BVar (y, TMod (mu, b)) in
-    infer ctx m e
-  (* B-CrispSumInfer *)
+  (* B-CrispSumInfer and B-CrispPairInfer *)
   | SMatch (v, l) ->
     if not (is_val v.sexpr) then
       expected_val v.loc v;

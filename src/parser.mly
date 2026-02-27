@@ -71,32 +71,26 @@ let stype :=
   | ~ = prop_type; <>
   | FORALL;  l = targ+; DOT; t = stype; { wrap_type l t }
 
-let pattern :=
-  | ~ = IDENT; <PVar>
-
 let loc_expr(expr) ==
   sexpr = expr; { { sexpr; loc = Some ($startpos, $endpos) } }
 
-let handle_clause :=
-  | PIPE; l = string_loc; p = pattern; r = IDENT; DARROW; n = sexpr;
-    { (fst l, snd l, p, r, n) }
-
-let loc_pat(expr) ==
-  sexpr = expr; { { sexpr; loc = Some ($startpos, $endpos) } }
-
-let tpattern :=
-  | LPAR; ~ = tpattern; RPAR; <>
+let pattern :=
+  | LPAR; ~ = pattern; RPAR; <>
   | p = midrule(
         | WILDCARD; { SPWild }
         | ~ = IDENT; <SPVar>
-        | ~ = MIDENT; LPAR; ~ = separated_list(COMMA, tpattern); RPAR; <SPCons>
+        | ~ = MIDENT; LPAR; ~ = separated_list(COMMA, pattern); RPAR; <SPCons>
         | c = MIDENT; { SPCons (c, []) }
      (*   | c = MIDENT; p = tpattern; { SPCons (c, [p]) } *)
 );
     { { spat = p; ploc = Some ($startpos, $endpos) } }
 
+let handle_clause :=
+  | PIPE; l = string_loc; p = IDENT; r = IDENT; DARROW; n = sexpr;
+    { (fst l, snd l, p, r, n) }
+
 let match_clause :=
-  | PIPE; ~ = tpattern; ARROW; ~ = sexpr; <>
+  | PIPE; ~ = pattern; ARROW; ~ = sexpr; <>
 
 let atom_expr :=
  | LPAR; ~ = sexpr; RPAR; <>
@@ -105,7 +99,7 @@ let atom_expr :=
    | ~ = INT; <SInt>
    | UNIT; { SUnit }
    | HANDLE; LANGLE; d = separated_list (COMMA, seff); RANGLE; m = sexpr; WITH;
-     PIPE; RETURN; p = pattern; DARROW; n = sexpr;
+     PIPE; RETURN; p = IDENT; DARROW; n = sexpr;
      h = handle_clause*;
      END; { SHand (m, d, (h, (p, n))) }
    | MATCH; ~ = sexpr; WITH; ~ = match_clause*; END; <SMatch>)
@@ -137,7 +131,11 @@ let seq_expr :=
 let sexpr :=
   | ~ = seq_expr; <>
   | loc_expr(
-    | LET; LPAR; x = IDENT; y = IDENT; RPAR; EQU; m = sexpr; IN; n = sexpr; <SLetP>
+    | LET; x = IDENT; DCOL; t = stype; EQU; m = sexpr; IN; n = sexpr;
+    { SMatch ({ sexpr = SAnn (m, t); loc = m.loc },
+              [{spat = SPVar x ; ploc = None}, n]) }
+    | LET; x = IDENT; EQU; m = sexpr; IN; n = sexpr;
+    { SMatch (m, [{spat = SPVar x ; ploc = None}, n]) }
     | FUN; ~ = IDENT; ARROW; ~ = sexpr; <SLam>)
 
 eff:

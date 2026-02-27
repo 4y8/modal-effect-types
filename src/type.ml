@@ -43,7 +43,6 @@ let rec is_val = function
   | SLam (_, _) -> true
   | SAnn (m, _)
   | SAppT (m, _) -> is_val m.sexpr
-  | SPair (m, n) -> is_val m.sexpr && is_val n.sexpr
   | SCons (_, l) -> List.for_all (fun {sexpr; _} -> is_val sexpr) l
   | _ -> false
 
@@ -54,7 +53,6 @@ let is_forall = function TForA _ -> true | _ -> false
 let rec check_type ?(s=[]) ctx t = match t.stype with
   | STMod (m, t) -> TMod (check_mod ctx m, check_type ~s ctx t)
   | STArr (t, t') -> TArr (check_type ~s ctx t, check_type ctx t' ~s)
-  | STProd (t, t') -> TProd (check_type ~s ctx t, check_type ~s ctx t')
   | STForA (x, k, t) ->
     TForA (x, k, check_type ~s:(List.remove_assoc x s) (ctx <: BType (x, k)) t)
   | STCons (c, l) ->
@@ -111,10 +109,6 @@ and check_mask ctx = function
 let split_arr loc = function
   | TArr (a, b) -> a, b
   | a -> expected_arr loc a
-
-let split_prod loc = function
-  | TProd (a, b) -> a, b
-  | a -> expected_prod loc a
 
 let split_forall loc = function
   | TForA (x, k, t) -> x, k, t
@@ -184,11 +178,6 @@ let rec check ctx ({loc; sexpr} as m) a e =
         check ctx ni b e
     in
     List.iter check_clause l
-  (* B-Pair *)
-  | SPair (m, n) ->
-    let a, b = split_prod loc a in
-    check ctx m a e;
-    check ctx n b e
   (* B-CrispSumCheck and B-CrispPairCheck *)
   | SMatch (v, l) ->
     if not (is_val v.sexpr) then
@@ -281,7 +270,6 @@ and infer ctx {loc; sexpr} e = match sexpr with
     in
     let bi = List.map infer_clause l in
     List.fold_left (join_type loc e) b' bi
-  | SUnit -> TCons ("unit", [])
   | SInt _ -> TCons ("int", [])
   (* B-CrispSumInfer and B-CrispPairInfer *)
   | SMatch (v, l) ->
@@ -292,10 +280,6 @@ and infer ctx {loc; sexpr} e = match sexpr with
         let ctx = split_pat ctx Effect.id t p in
         infer ctx n e) l in
     List.fold_left (join_type loc e) (List.hd types) (List.tl types)
-  | SPair (m, n) ->
-    let a = infer ctx m e in
-    let b = infer ctx n e in
-    TProd (a, b)
   | SSeq (m, n) ->
     let _ = check ctx m (TVar ("unit", Abs)) e in
     infer ctx n e

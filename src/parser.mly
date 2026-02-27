@@ -24,6 +24,9 @@ let wrap_if c t f loc =
           [{spat = SPCons ("True", []); ploc = None}, t;
            {spat = SPCons ("False", []); ploc = None}, f;])
       ; loc = Some loc }
+
+let stprod (a, b) = STCons ("pair", [a; b])
+let spair (a, b) = SCons ("Pair", [a; b])
 %}
 
 %token EOF
@@ -77,7 +80,7 @@ let cons_type :=
 let prop_type :=
   | ~ = cons_type; <>
   | loc_type (
-    | t1 = prop_type; TIMES; t2 = prop_type; <STProd>
+    | t1 = prop_type; TIMES; t2 = prop_type; <stprod>
     | t1 = prop_type; ARROW; t2 = prop_type; <STArr>)
 
 (* maybe the distinction between abs and any kind arguments should not be done
@@ -117,7 +120,7 @@ let atom_expr :=
  | loc_expr(
    | ~ = IDENT; <SVar>
    | ~ = INT; <SInt>
-   | UNIT; { SUnit }
+   | UNIT; { SCons ("Unit", []) }
    | HANDLE; LANGLE; d = separated_list (COMMA, seff); RANGLE; m = sexpr; WITH;
      PIPE; RETURN; p = IDENT; DARROW; n = sexpr;
      h = handle_clause*;
@@ -148,7 +151,7 @@ let op_expr :=
 
 let pair_expr :=
   | ~ = op_expr; <>
-  | loc_expr( | LPAR; ~ = pair_expr; COMMA; ~ = op_expr; RPAR; <SPair>)
+  | loc_expr( | LPAR; ~ = pair_expr; COMMA; ~ = op_expr; RPAR; <spair>)
 
 let do_expr :=
   | ~ = pair_expr; <>

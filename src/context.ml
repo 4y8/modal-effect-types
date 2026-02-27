@@ -18,7 +18,6 @@ let rec get_kind gamma x = match gamma with
 let rec is_abs = function
   | TMod (MAbs _, _) -> true
   | TMod (MRel _, a) -> is_abs a
-  | TProd (a, b) -> is_abs a && is_abs b
   | TArr (_, _) -> false
   | TVar (_, k) -> k = Abs
   | TForA (_, _, t) -> is_abs t

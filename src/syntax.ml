@@ -18,7 +18,6 @@ and surface_tdsec
   | STMod of surface_mod * surface_type
   | STVar of string
   | STCons of string * surface_type list
-  | STProd of surface_type * surface_type
   | STForA of string * kind * surface_type
 and surface_type = { stype : surface_tdsec ; tloc : loc }
 [@@deriving show]
@@ -39,8 +38,6 @@ type surface_desc
   | SAnn of surface_expr * surface_type
   | SSeq of surface_expr * surface_expr
   | SLet of string * surface_expr * surface_expr
-  | SUnit
-  | SPair of surface_expr * surface_expr
   | SAppT of surface_expr * surface_type
   | SMask of surface_expr * (string * loc) list
   | SHand of surface_expr * surface_effect list * surface_handler
@@ -72,7 +69,6 @@ and pure_type
   = TArr of pure_type * pure_type
   | TMod of pure_mod * pure_type
   | TVar of string * kind
-  | TProd of pure_type * pure_type
   | TCons of string * pure_type list
   | TForA of string * kind * pure_type
 [@@deriving show]

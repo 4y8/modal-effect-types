@@ -108,11 +108,12 @@ and check_mask ctx = function
 
 let split_arr loc = function
   | TArr (a, b) -> a, b
-  | a -> expected_arr loc a
+  | a ->
+    expected_arr loc a
 
 let split_forall loc = function
   | TForA (x, k, t) -> x, k, t
-  | a -> expected_arr loc a
+  | a -> expected_forall loc a
 
 let split_cons loc = function
   | TCons (c, l) -> c, l
@@ -213,7 +214,8 @@ let rec check ctx ({loc; sexpr} as m) a e =
       if not (Effect.sub_mod mu nu e) && not (is_abs g) then
         mod_mismatch loc mu nu g
 
-and infer ctx {loc; sexpr} e = match sexpr with
+and infer ctx {loc; sexpr} e =
+  match sexpr with
   (* B-Var *)
   | SVar x ->
     begin match get_type_context ctx.gamma x with
@@ -270,6 +272,7 @@ and infer ctx {loc; sexpr} e = match sexpr with
     let bi = List.map infer_clause l in
     List.fold_left (join_type loc e) b' bi
   | SInt _ -> TCons ("int", [])
+  | SStr _ -> TCons ("string", [])
   (* B-CrispSumInfer and B-CrispPairInfer *)
   | SMatch (v, l) ->
     if not (is_val v.sexpr) then
@@ -280,12 +283,13 @@ and infer ctx {loc; sexpr} e = match sexpr with
         infer ctx n e) l in
     List.fold_left (join_type loc e) (List.hd types) (List.tl types)
   | SSeq (m, n) ->
-    let _ = check ctx m (TVar ("unit", Abs)) e in
+    let _ = check ctx m (TCons ("unit", [])) e in
     infer ctx n e
   | SLet (x, m, n) ->
     let t = infer ctx m e in
     infer (ctx <: BVar (x, t)) n e
-  | _ -> failwith "todo"
+  | _ ->
+    failwith "todo"
 
 let check_decl ctx d = match d with
   | (x, SDSig t), _ ->
@@ -315,13 +319,19 @@ let check_decl ctx d = match d with
 let check_prog =
   let int = TCons ("int", []) in
   let bool = TCons ("bool", []) in
+  let string = TCons ("string", []) in
+  let unit = TCons ("unit", []) in
   let (@->) t t' = TArr (t, t') in
   let init_ctx = { gamma = [BVar ("+", TMod (MAbs [], int @-> int @-> int));
                             BVar ("*", TMod (MAbs [], int @-> int @-> int));
                             BVar ("-", TMod (MAbs [], int @-> int @-> int));
                             BVar ("=", TMod (MAbs [], int @-> int @-> bool));
+                            BVar ("string_eq", TMod (MAbs [], string @-> string @-> bool));
+                            BVar ("^", TMod (MAbs [], string @-> string @-> string));
                             BVar ("&&", TMod (MAbs [], bool @-> bool @-> bool));
+                            BVar ("fail", TMod (MAbs [], TForA ("f", Any, unit @-> (TVar ("f", Any)))));
+                            BVar ("print", TMod (MAbs [], string @-> unit))
                            ]
                  ; effects = []
-                 ; data = ["int", ([], []); ] } in
+                 ; data = ["int", ([], []); "string", ([], [])] } in
   List.fold_left check_decl init_ctx

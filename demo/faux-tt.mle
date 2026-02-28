@@ -28,11 +28,11 @@ type unit = Unit
 -- surface ---------------------------------------------------------------------
 
 type surface
-  = SVar of int
-  | SLam of int, option surface, surface
+  = SVar of string
+  | SLam of string, option surface, surface
   | SApp of surface, surface
   | SType
-  | SPi of int, surface, surface
+  | SPi of string, surface, surface
   | SAs of surface, surface
 
 -- TT --------------------------------------------------------------------------
@@ -57,25 +57,48 @@ type value
   | VLam of int, tm, tm
   | VSpine of head, list tm
 
+-- state -----------------------------------------------------------------------
+eff state
+  = fresh_var : unit => int
+
+val with_state : forall [a] . [](<state>{a} -> int -> a)
+let with_state c =
+  handle<state> c () with
+  | return v => fun x -> v
+  | fresh_var u k => fun x -> k x (x + 1)
+  end
+
+-- error -----------------------------------------------------------------------
+
+eff error
+  = unknown_var : string => forall [a] . a
+  | cannot_infer_arg : string => forall [a] . a
+  | expected_fun : value => forall [a] . a
+  | type_mismatch : tm * tm => forall [a] . a
+  | internal_error : unit => forall [a] . a
+
+val with_print_error : forall [a] . [](<error>{a} -> a)
+let with_print_error c =
+  handle<error> c () with
+  | return v => v
+  | unknown_var v k => print ("error: unknown variable " ^ v); fail @a ()
+  | cannot_infer_arg v k =>
+    print ("error: cannot infer the type of the argument " ^ v);
+    fail @a ()
+  | expected_fun v k => print "error: expected a function"; fail @a ()
+  | type_mismatch p k => print "error: type mismatch"; fail @a ()
+  | internal_error u k =>
+    print "error: internal failure (shouldn't happen)"; fail @a ()
+  end
+
 -- context ---------------------------------------------------------------------
 
 eff context
   = lookup_var : int => tm
+  | lookup_id : string => int
 --  | lookup_meta : int => (option tm * tm)
 --  | fresh_meta : tm => tm
 --  | set_meta : int * tm => bool
-
-eff state
-  = fresh_var : unit => int
-
-eff error
-  = unknown_var : int => forall [a] . a
-  | cannot_infer_arg : int => forall [a] . a
-  | expected_fun : value => forall [a] . a
-  | type_mismatch : tm * tm => forall [a] . a
-
--- question : why can't the internal function have modality <context, error>
--- instead of <context> ?
 
 val with_bind : forall [a] . [context](int -> tm -> <context>{a} -> a)
 let with_bind x t c =
@@ -86,13 +109,32 @@ let with_bind x t c =
       k t
     else
       k (do lookup_var y)
+  | lookup_id v k => k (do lookup_id v)
   end
 
-val with_empty_ctx : forall [a] . [error](<context>{a} -> a)
-let with_empty_ctx c =
+val with_id : forall [a] . [state, context](string -> tm -> <context>(int -> a) -> a)
+let with_id v t c =
+  let x = do fresh_var () in
+  handle<context> c x with
+  | return v => v
+  | lookup_var y k =>
+    if y = x then
+      k t
+    else
+      k (do lookup_var y)
+  | lookup_id w k =>
+    if string_eq v w then
+      k x
+    else
+      k (do lookup_id w)
+  end
+
+val with_empty_context : forall [a] . [error](<context>{a} -> a)
+let with_empty_context c =
   handle<context> c () with
   | return v => v
-  | lookup_var y k => (do unknown_var y) @ a
+  | lookup_var y k => (do internal_error ()) @ a
+  | lookup_id v k => (do unknown_var v) @ a
   end
 
 -- subst -----------------------------------------------------------------------
@@ -222,14 +264,18 @@ val check : [context, state, error](surface -> tm -> tm)
 let infer e =
   match e with
   | SType -> (Type, Type)
-  | SVar (x) -> (Var (x), do lookup_var x)
-  | SPi (x, t, u) ->
+  | SVar (v) ->
+    let x = do lookup_id v in
+    (Var (x), do lookup_var x)
+  | SPi (v, t, u) ->
     let t = check t Type in
-    with_bind @(tm * tm) x t {(Pi (x, t, check u Type), Type)}
-  | SLam (x, Some (t), e) ->
+    with_id @(tm * tm) v t
+      (fun x -> (Pi (x, t, check u Type), Type))
+  | SLam (v, Some (t), e) ->
     let t = check t Type in
-    with_bind @(tm * tm) x t {let (e, u) = infer e in
-                              (Lam (x, t, e), Pi (x, t, u))}
+    with_id @(tm * tm) v t
+      (fun x -> let (e, u) = infer e in
+                (Lam (x, t, e), Pi (x, t, u)))
   | SLam (x, None, _) -> (do cannot_infer_arg x) @ (tm * tm)
   | SAs (m, t) ->
     let t = check t Type in
@@ -259,3 +305,22 @@ let check e t =
     else
       (do type_mismatch (t, t')) @ tm
   end
+
+val top_level : forall [a] . [](<state, context, error>{a} -> a)
+let top_level c =
+  with_print_error @a {with_empty_context @a {with_state @a c 0}}
+
+val check_top_level : [](surface -> tm -> tm)
+let check_top_level s t =
+  top_level @tm {check s t}
+
+val infer_top_level : [](surface -> tm * tm)
+let infer_top_level s =
+  top_level @(tm * tm) {infer s}
+
+val main : [](unit -> unit)
+let main u =
+  let _ =
+    check_top_level (SLam ("A", None, SLam ("x", None, SVar ("x"))))
+                    (Pi (0, Type, Pi (1, Var (0), Var (0)))) in
+  ()

@@ -34,16 +34,18 @@ let spair (a, b) = SCons ("Pair", [a; b])
 %token EOF
 %token <string> IDENT
 %token <string> MIDENT
+%token <string> STRING
 %token <int> INT
 %token HANDLE DO WITH RETURN EFFECT FUN TYPE IF THEN ELSE FORALL MATCH MASK LET
 %token IN END VAL OF
-%token PLUS MINUS TIMES AND
+%token PLUS MINUS TIMES AND CARET
 %token LANGLE RANGLE LSQUARE RSQUARE LCURLY RCURLY LPAR RPAR
 %token COMMA PIPE ARROW DARROW DOT DCOL EQU WILDCARD AT SCOL
 %token UNIT
 
 %left AND
 %left EQU
+%right CARET
 %right ARROW
 %left PLUS MINUS
 %left TIMES
@@ -129,9 +131,11 @@ let match_clause :=
 let atom_expr :=
  | LPAR; ~ = sexpr; RPAR; <>
  | loc_expr(
+   | LPAR; l = sexpr; COMMA; r = sexpr; RPAR; <spair>
    | LCURLY; e = sexpr; RCURLY; { SLam ("", e) }
    | ~ = IDENT; <SVar>
    | ~ = INT; <SInt>
+   | ~ = STRING; <SStr>
    | UNIT; { SCons ("Unit", []) }
    | HANDLE; LANGLE; d = separated_list (COMMA, seff); RANGLE; m = sexpr; WITH;
      PIPE; RETURN; p = IDENT; DARROW; n = sexpr;
@@ -154,6 +158,7 @@ let op ==
               | PLUS; { SVar "+" }
               | MINUS; { SVar "-" }
               | AND; { SVar "&&" }
+              | CARET; { SVar "^" }
               | TIMES; { SVar "*" })
 
 let op_expr :=
@@ -167,12 +172,8 @@ let do_expr :=
   | loc_expr(
     | DO; ~ = IDENT; ~ = if_expr; <SDo>)
 
-let pair_expr :=
-  | ~ = do_expr; <>
-  | loc_expr( | LPAR; l = pair_expr; COMMA; r = pair_expr; RPAR; <spair>)
-
 let if_expr :=
-  | ~ = pair_expr; <>
+  | ~ = do_expr; <>
   | loc_expr(
     | IF; c = sexpr; THEN; t = sexpr; ELSE; f = if_expr;
       { wrap_if c t f ($startpos, $endpos) })

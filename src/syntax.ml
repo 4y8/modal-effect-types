@@ -33,6 +33,7 @@ type surface_desc
   = SDo of string * surface_expr
   | SVar of string
   | SInt of int
+  | SStr of string
   | SLam of string * surface_expr
   | SApp of surface_expr * surface_expr
   | SAnn of surface_expr * surface_type

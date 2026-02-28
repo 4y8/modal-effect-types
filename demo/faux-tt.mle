@@ -292,10 +292,12 @@ let infer e =
 
 let check e t =
   match e with
-  | SLam (x, None, m) ->
+  | SLam (v, None, m) ->
     match norm_tm t with
-    | VPi (x, t, u) ->
-      Lam (x, t, check m u)
+    | VPi (y, t, u) ->
+      with_id @(tm) v t
+      (fun x ->
+        Lam (x, t, check m (subst_single y (Var (x)) u)))
     | t -> (do expected_fun t) @ tm
     end
   | _ ->

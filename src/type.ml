@@ -121,7 +121,7 @@ let split_cons loc = function
 
 let rec split_pat ctx mu t { spat; ploc } =
   let nu, g = get_guarded t in
-  let mu = Effect.compose mu nu in
+  let mu = Effects.compose mu nu in
   match spat with
   | SPWild -> ctx
   | SPVar x -> ctx <: BVar (x, TMod (mu, g))
@@ -144,7 +144,7 @@ let join_type loc f t t' =
     type_mismatch loc g g';
   if is_abs g then
     g
-  else match Effect.join_mod mu nu f with
+  else match Effects.join_mod mu nu f with
     | None -> mod_mismatch loc mu nu g
     | Some lam -> TMod (lam, g)
 
@@ -154,7 +154,7 @@ let rec check ctx ({loc; sexpr} as m) a e =
   | v when is_val v && is_mod a ->
     begin match a with
       | TMod (mu, a) ->
-        check (ctx <: Lock (mu, e)) m a (Effect.apply_mod mu e)
+        check (ctx <: Lock (mu, e)) m a (Effects.apply_mod mu e)
       | _ -> failwith "impossible"
     end
   (* B-Forall *)
@@ -171,8 +171,8 @@ let rec check ctx ({loc; sexpr} as m) a e =
     let d = check_effect_ctx ctx d in
     let a = infer (ctx <: Lock (MRel ([], d), e)) m (d @ e) in
     check (ctx <: BVar (x, TMod (MRel ([], d), a))) n b e;
-    let check_clause (li, loc, pi, ri, ni) =
-      match Effect.get_eff li d with
+    let check_clause (li, (loc, pi, ri, ni)) =
+      match Effects.get_eff li d with
       | None -> unknown_eff loc li
       | Some (ai, bi) ->
         let ctx = ctx <: BVar (pi, ai) <: BVar (ri, TArr (bi, b)) in
@@ -185,7 +185,7 @@ let rec check ctx ({loc; sexpr} as m) a e =
        expected_val v.loc v;*)
     let t = infer ctx v e in
     List.iter (fun (p, n) ->
-        let ctx = split_pat ctx Effect.id t p in
+        let ctx = split_pat ctx Effects.id t p in
         check ctx n a e) l
   | SSeq (m, n) ->
     let _ = check ctx m (TCons ("unit", [])) e in
@@ -211,7 +211,7 @@ let rec check ctx ({loc; sexpr} as m) a e =
     let nu, g' = get_guarded a in
     if g <> g' then type_mismatch loc g g'
     else
-      if not (Effect.sub_mod mu nu e) && not (is_abs g) then
+      if not (Effects.sub_mod mu nu e) && not (is_abs g) then
         mod_mismatch loc mu nu g
 
 and infer ctx {loc; sexpr} e =
@@ -235,7 +235,7 @@ and infer ctx {loc; sexpr} e =
   | SApp (m, n) ->
     let mu, g = get_guarded (infer ctx m e) in
     let a, b = split_arr loc g in
-    if not Effect.(sub_mod mu id e) then
+    if not Effects.(sub_mod mu id e) then
       no_unboxing loc mu e;
     check ctx n a e;
     b
@@ -243,7 +243,7 @@ and infer ctx {loc; sexpr} e =
   | SAppT (m, ({tloc; _} as t)) ->
     let t = check_type ctx t in
     let mu, g = get_guarded (infer ctx m e) in
-    if not Effect.(sub_mod mu id e) then
+    if not Effects.(sub_mod mu id e) then
       no_unboxing loc mu e;
     let x, k, b = split_forall loc g in
     if k = Abs && not (is_abs t) then
@@ -251,7 +251,7 @@ and infer ctx {loc; sexpr} e =
     Subst.pure_type [x, t] b
   (* B-Do *)
   | SDo (l, m) ->
-    let (a, b) = match Effect.get_eff l e with
+    let (a, b) = match Effects.get_eff l e with
       | None -> unknown_eff loc l
       | Some p -> p
     in
@@ -262,8 +262,8 @@ and infer ctx {loc; sexpr} e =
     let d = check_effect_ctx ctx d in
     let a = infer (ctx <: Lock (MRel ([], d), e)) m (d @ e) in
     let b' = infer (ctx <: BVar (x, TMod (MRel ([], d), a))) n e in
-    let infer_clause (li, loc, pi, ri, ni) =
-      match Effect.get_eff li d with
+    let infer_clause (li, (loc, pi, ri, ni)) =
+      match Effects.get_eff li d with
       | None -> unknown_eff loc li
       | Some (ai, bi) ->
         let ctx = ctx <: BVar (pi, ai) <: BVar (ri, TArr (bi, b')) in
@@ -279,7 +279,7 @@ and infer ctx {loc; sexpr} e =
       expected_val v.loc v;
     let t = infer ctx v e in
     let types = List.map (fun (p, n) ->
-        let ctx = split_pat ctx Effect.id t p in
+        let ctx = split_pat ctx Effects.id t p in
         infer ctx n e) l in
     List.fold_left (join_type loc e) (List.hd types) (List.tl types)
   | SSeq (m, n) ->
@@ -291,30 +291,30 @@ and infer ctx {loc; sexpr} e =
   | _ ->
     failwith "todo"
 
-let check_decl ctx d = match d with
+let check_decl (ctx, prog) d = match d with
   | (x, SDSig t), _ ->
     let t = check_type ctx t in
     let t = if is_mod t then t else TMod (MAbs [], t) in
-    ctx <: BVar (x, t)
+    ctx <: BVar (x, t), prog
   | (x, SDFun e), loc ->
     let t = match get_type_context ctx.gamma x with
       | None -> missing_declaration loc x
       | Some (t, _) -> t
     in
-    check ctx e t []; ctx
+    check ctx e t []; ctx, (x, e) :: prog
   | (x, SDEff (args, l)), _ ->
     let ctx' = List.fold_left (fun ctx x -> ctx <: BType (x, Abs)) ctx args in
     let l =
       List.map (fun (x, (a, b)) ->
         { eff_name = x; eff_type = check_type ctx' a, check_type ctx' b })
          l in
-    { ctx with effects = (x, (args, l)) :: ctx.effects }
+    { ctx with effects = (x, (args, l)) :: ctx.effects }, prog
   | (x, SDADT (args, l)), _ ->
     (* add mock definition in the context just for type verification *)
     let ctx' = { ctx with data = (x, (args, [])) :: ctx.data } in
     let ctx' = List.fold_left (fun ctx x -> ctx <: BType (x, Any)) ctx' args in
     let l = List.map (Pair.map_snd (List.map (check_type ctx'))) l in
-    { ctx with data = (x, (args, l)) :: ctx.data }
+    { ctx with data = (x, (args, l)) :: ctx.data }, prog
 
 let check_prog =
   let int = TCons ("int", []) in
@@ -334,4 +334,4 @@ let check_prog =
                            ]
                  ; effects = []
                  ; data = ["int", ([], []); "string", ([], [])] } in
-  List.fold_left check_decl init_ctx
+  Fun.compose snd (List.fold_left check_decl (init_ctx, []))

@@ -46,7 +46,7 @@ type surface_desc
   | SMatch of surface_expr * (surface_pat * surface_expr) list
 and surface_expr = { sexpr : surface_desc ; loc : loc }
 
-and surface_handler = (string * loc * string * string * surface_expr) list *
+and surface_handler = (string * (loc * string * string * surface_expr)) list *
                       (string * surface_expr)
 [@@deriving show]
 

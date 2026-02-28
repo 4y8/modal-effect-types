@@ -123,7 +123,7 @@ let pattern :=
 
 let handle_clause :=
   | PIPE; l = string_loc; p = IDENT; r = IDENT; DARROW; n = sexpr;
-    { (fst l, snd l, p, r, n) }
+    { (fst l, (snd l, p, r, n)) }
 
 let match_clause :=
   | PIPE; ~ = pattern_list; ARROW; ~ = sexpr; <>

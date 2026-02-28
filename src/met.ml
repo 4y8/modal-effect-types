@@ -1,6 +1,7 @@
 open Syntax
 open Type
 
+
 let show_ast = ref false
 let repl = ref true
 
@@ -8,7 +9,7 @@ let read_file f =
   repl := false;
   let ic = open_in f in
   let lb = Lexing.from_channel ic in
-  let p = 
+  let p =
       try
         Parser.file Lexer.lexer lb
       with
@@ -17,7 +18,7 @@ let read_file f =
             (Printf.sprintf "Unexpected token: \"%s\"" (Lexing.lexeme lb)) in
   if !show_ast then
     List.iter (fun ((_, d), _) -> print_endline @@ show_surface_decl d) p;
-  ignore (check_prog p);
+  ignore (Eval.eval_prog (check_prog p));
   close_in ic
 
 let () =

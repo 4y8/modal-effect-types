@@ -25,22 +25,22 @@ let rec is_abs = function
 
 let rec get_guarded = function
   | TMod (mu, t) -> let nu, g = get_guarded t in
-    Effect.compose mu nu, g
-  | g -> Effect.id, g
+    Effects.compose mu nu, g
+  | g -> Effects.id, g
 
 let across a nu f =
   if is_abs a then Some a
   else
     let mu, g = get_guarded a in
-    match Effect.right_residual nu mu f with
+    match Effects.right_residual nu mu f with
     | Some xi -> Some (TMod (xi, g))
     | _ -> None
 
 let rec locks e = function
-  | [] -> Effect.id, e
+  | [] -> Effects.id, e
   | Lock (m, e) :: tl ->
     let (m', f) = locks e tl in
-    Effect.compose m' m, f
+    Effects.compose m' m, f
   | _ :: tl -> locks e tl
 
 let rec get_type_context gamma x = match gamma with

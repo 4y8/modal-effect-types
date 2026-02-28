@@ -52,7 +52,7 @@ rule lexer = parse
   | '=' { EQU }
   | '@' { AT }
   | '^' { CARET }
-  | ('"' [^ '"' '\\']* '"') as s { STRING s }
+  | ('"' ([^ '"' '\\']* as s) '"') { STRING s }
   | "&&" { AND }
   | "()" { UNIT }
   | _ as c { error lexbuf (Printf.sprintf "Unknown character : %c" c) }

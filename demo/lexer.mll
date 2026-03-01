@@ -12,7 +12,6 @@ let ident = alpha id*
 let blank_line = [' ' '\t' '\r']* ("--" [^'\n']*)? '\n'
 
 rule lexer = parse
-  | eof { EOF }
   | [' ' '\t' '\r'] { lexer lexbuf }
   | blank_line { Lexing.new_line lexbuf; lexer lexbuf }
   | "fun" { FUN }
@@ -25,4 +24,5 @@ rule lexer = parse
   | '*' { TYPE }
   | ";;" { END }
   | '@' { AT }
+  | '?' { HOLE }
   | _ as c { error lexbuf (Printf.sprintf "Unknown character : %c" c) }

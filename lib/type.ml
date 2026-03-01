@@ -289,6 +289,7 @@ and infer ctx {loc; sexpr} e =
     let t = infer ctx m e in
     infer (ctx <: BVar (x, t)) n e
   | _ ->
+    print_endline (show_surface_desc sexpr);
     failwith "todo"
 
 let check_decl (ctx, prog) d = match d with

@@ -7,9 +7,8 @@ let vlam (x, m) =
 
 %}
 
-%token EOF
 %token <string> IDENT
-%token LPAR RPAR ARROW DARROW DCOL AT
+%token LPAR RPAR ARROW DARROW DCOL AT HOLE
 %token FUN TYPE
 %token END
 
@@ -26,6 +25,7 @@ let arg :=
   | LPAR; x = id; DCOL; t = expr; RPAR; { x, VCon ("Some", [t]) }
 
 let atom_expr :=
+  | HOLE; { VCon ("SHole", []) }
   | LPAR; ~ = expr; RPAR; <>
   | LPAR; m = expr; AT; t = expr; RPAR; { VCon ("SAs", [m; t]) }
   | x = id; { VCon ("SVar", [x]) }
@@ -43,3 +43,5 @@ let expr :=
 
 let prog :=
   | ~ = expr; END; <>
+
+

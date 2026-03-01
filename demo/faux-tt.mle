@@ -1,7 +1,3 @@
--- stdlib : list ---------------------------------------------------------------
-
-type list a = Nil | Cons of a, list a
-
 -- stdlib : pair ---------------------------------------------------------------
 
 type pair a b = Pair of a, b
@@ -10,16 +6,20 @@ type pair a b = Pair of a, b
 
 type option a = None | Some of a
 
-val option.map : forall a b . (a -> b) -> option a -> option b
-let option.map f o =
-  match o with
-  | None -> None
-  | Some (x) -> Some (f x)
-  end
-
 -- stdlib : bool ---------------------------------------------------------------
 
 type bool = True | False
+
+-- stdlib : list ---------------------------------------------------------------
+
+type list a = Nil | Cons of a, list a
+
+val mem_int : [](int -> list int -> bool)
+let mem_int x l =
+  match l with
+  | Nil -> False
+  | Cons (y, tl) -> if y = x then True else mem_int x tl
+  end
 
 -- stdlib : unit ---------------------------------------------------------------
 
@@ -34,6 +34,7 @@ type surface
   | SType
   | SPi of string, surface, surface
   | SAs of surface, surface
+  | SHole
 
 -- TT --------------------------------------------------------------------------
 
@@ -43,13 +44,13 @@ type tm
   | App of tm, tm
   | Type
   | Pi of int, tm, tm
---  | Meta of int
+  | Meta of int
 
 -- value -----------------------------------------------------------------------
 
 type head
   = HVar of int
-  -- | HMeta of int
+  | HMeta of int
 
 type value
   = VType
@@ -57,7 +58,36 @@ type value
   | VLam of int, tm, tm
   | VSpine of head, list tm
 
+-- occur -----------------------------------------------------------------------
+
+val occur : [](int -> tm -> bool)
+let occur x m =
+  match m with
+  | Var (y) -> y = x
+  | Lam (y, t, m) ->
+    if occur x t then
+      True
+    else if y = x then
+      False
+    else
+      occur x m
+  | Pi (y, t, u) ->
+    if occur x t then
+      True
+    else if y = x then
+      False
+    else
+      occur x u
+  | Type -> False
+  | App (m, n) ->
+    if occur x m then
+      True
+    else occur x n
+  | Meta (_) -> False
+  end
+
 -- state -----------------------------------------------------------------------
+
 eff state
   = fresh_var : unit => int
 
@@ -76,6 +106,7 @@ eff error
   | expected_fun : value => forall [a] . a
   | type_mismatch : tm * tm => forall [a] . a
   | internal_error : unit => forall [a] . a
+  | cannot_infer_hole : unit => forall [a] . a
 
 val with_print_error : forall [a] . [](<error>{a} -> a)
 let with_print_error c =
@@ -87,6 +118,9 @@ let with_print_error c =
     fail @a ()
   | expected_fun v k => print "error: expected a function"; fail @a ()
   | type_mismatch p k => print "error: type mismatch"; fail @a ()
+  | cannot_infer_hole u k =>
+    print "error: cannot infer type of a hole";
+    fail @a ()
   | internal_error u k =>
     print "error: internal failure (shouldn't happen)"; fail @a ()
   end
@@ -96,26 +130,13 @@ let with_print_error c =
 eff context
   = lookup_var : int => tm
   | lookup_id : string => int
---  | lookup_meta : int => (option tm * tm)
---  | fresh_meta : tm => tm
---  | set_meta : int * tm => bool
+  | lookup_meta : int => (option tm * tm)
+  | fresh_meta : tm => tm
+  | set_meta : int * tm => bool
 
-val with_bind : forall [a] . [context](int -> tm -> <context>{a} -> a)
-let with_bind x t c =
+val with_bind : forall [a] . [context](string -> int -> tm -> <context>{a} -> a)
+let with_bind v x t c =
   handle<context> c () with
-  | return v => v
-  | lookup_var y k =>
-    if y = x then
-      k t
-    else
-      k (do lookup_var y)
-  | lookup_id v k => k (do lookup_id v)
-  end
-
-val with_id : forall [a] . [state, context](string -> tm -> <context>(int -> a) -> a)
-let with_id v t c =
-  let x = do fresh_var () in
-  handle<context> c x with
   | return v => v
   | lookup_var y k =>
     if y = x then
@@ -127,14 +148,56 @@ let with_id v t c =
       k x
     else
       k (do lookup_id w)
+  | fresh_meta u k =>
+    let u : tm = Pi (x, t, u) in
+    k (App ((do fresh_meta u), Var (x)))
+  | set_meta p k =>
+    let (_, e) = p in
+    if occur x e then
+      k False
+    else
+      k (do set_meta p)
+  | lookup_meta x k => k (do lookup_meta x)
   end
 
-val with_empty_context : forall [a] . [error](<context>{a} -> a)
+val with_id : forall [a] . [state, context](string -> tm -> <context>(int -> a) -> a)
+let with_id v t c =
+  let x = do fresh_var () in
+  with_bind @a v x t {c x}
+
+val with_var : forall [a] . [context](int -> tm -> <context>{a} -> a)
+let with_var x c =
+  with_bind @a "" x c
+
+val find_meta : int -> list (int * (option tm * tm)) -> option tm * tm
+let find_meta x l =
+  match l with
+  | Nil -> fail @(option tm * tm) ()
+  | Cons ((y, p), tl) ->
+    if y = x then
+      p
+    else
+      find_meta x tl
+  end
+
+val with_empty_context : forall [a] . [error, state](<context>{a} -> list (int * (option tm * tm)) -> a)
 let with_empty_context c =
   handle<context> c () with
-  | return v => v
-  | lookup_var y k => (do internal_error ()) @ a
-  | lookup_id v k => (do unknown_var v) @ a
+  | return v => fun env -> v
+  | lookup_id v k => fun env -> (do unknown_var v) @a
+  | lookup_var x k => fun env ->(do internal_error ()) @a
+  | lookup_meta x k => fun env -> k (find_meta x env) env
+  | set_meta p k =>
+    fun env ->
+      let x, m = p in
+      match find_meta x env with
+      | None, t -> k True (Cons ((x, (Some (m), t)), env))
+      | Some (_), _ -> fail @a ()
+      end
+  | fresh_meta t k =>
+    fun env ->
+      let x = do fresh_var () in
+      k (Meta (x)) (Cons ((x, (None, t)), env))
   end
 
 -- subst -----------------------------------------------------------------------
@@ -150,6 +213,8 @@ let lookup x l =
 val subst : [state](list (int * tm) -> tm -> tm)
 let subst s m =
   match m with
+  | Meta (_) -> m
+  | App (m, n) -> App (subst s m, subst s n)
   | Var (x) ->
     match lookup x s with
     | None -> m
@@ -170,11 +235,16 @@ let subst_single x m =
 
 -- norm ------------------------------------------------------------------------
 
-val norm_tm' : [state](tm -> tm)
+val norm_tm' : [state, context](tm -> tm)
 let norm_tm' m =
   match m with
   | Type -> Type
   | Var (_) -> m
+  | Meta (x) ->
+    match (do lookup_meta x) with
+    | None, _ -> m
+    | Some (m), _ -> norm_tm' m
+    end
   | Pi (_, _, _) -> m
   | Lam (_, _, _) -> m
   | App (m, n) ->
@@ -188,10 +258,11 @@ val fold_spine : (tm -> list tm -> head * list tm)
 let fold_spine m sp =
   match m with
   | Var (x) -> (HVar (x), sp)
+  | Meta (x) -> (HMeta (x), sp)
   | App (m, n) -> fold_spine m (Cons (n, sp))
   end
 
-val norm_tm : [state](tm -> value)
+val norm_tm : [state, context](tm -> value)
 let norm_tm e =
   match norm_tm' e with
   | Type -> VType
@@ -202,41 +273,71 @@ let norm_tm e =
     VSpine (h, sp)
   end
 
--- equal -----------------------------------------------------------------------
-
-val equal_at : [state, context](tm -> tm -> tm -> bool)
-val equal_tm : [state, context](tm -> tm -> bool)
-val equal_sp : [state, context](head -> list tm -> head -> list tm -> bool)
-val equal_sp_fold : [state, context](tm -> list tm -> list tm -> bool)
-
-let equal_at m n t =
-  match norm_tm t with
-  | VPi (x, t, u) ->
-    with_bind @bool x t {equal_at (App (m, Var (x))) (App (n, Var (x))) u}
-  | VSpine (_, _) -> equal_tm m n
-  | VType -> equal_tm m n
+val eval_tm : [state, context](tm -> tm)
+let eval_tm m =
+  match m with
+  | Type -> Type
+  | Var (_) -> m
+  | Meta (x) ->
+    match (do lookup_meta x) with
+    | None, _ -> m
+    | Some (m), _ -> eval_tm m
+    end
+  | Pi (x, t, u) -> Pi (x, eval_tm t, eval_tm u)
+  | Lam (x, t, m) -> Lam (x, eval_tm t, eval_tm m)
+  | App (m, n) ->
+    let n = eval_tm n in
+    match eval_tm m with
+    | Lam (x, _, e) -> eval_tm (subst_single x n e)
+    | m -> App (m, n)
+    end
   end
 
-let equal_tm m n =
+-- unify -----------------------------------------------------------------------
+
+val unify_at : [state, context](tm -> tm -> tm -> bool)
+val unify_tm : [state, context](tm -> tm -> bool)
+val unify_spine : [state, context](tm -> list tm -> list tm -> bool)
+val abstract_meta : [state, context](tm -> list int -> list tm -> tm -> option tm)
+val unify_meta : [state, context](int -> list tm -> tm -> bool)
+
+let unify_at m n t =
+  match norm_tm t with
+  | VPi (x, t, u) ->
+    with_var @bool x t {unify_at (App (m, Var (x))) (App (n, Var (x))) u}
+  | VSpine (_, _) -> unify_tm m n
+  | VType -> unify_tm m n
+  end
+
+let unify_tm m n =
   let p : (value * value) = (norm_tm m, norm_tm n) in
   match p with
   | VType, VType -> True
   | VPi (x, t, u), VPi (x', t', u') ->
-    equal_at t t' Type &&
-    with_bind @bool x t {equal_at u (subst_single x' (Var (x)) u') Type}
-  | VSpine (hd, sp), VSpine (hd', sp') ->
-    equal_sp hd sp hd' sp'
+    unify_at t t' Type &&
+    with_var @bool x t {unify_at u (subst_single x' (Var (x)) u') Type}
+  | VSpine (HVar (x), sp), VSpine (HVar (x'), sp') ->
+    if x = x' then
+      unify_spine (do lookup_var x) sp sp'
+    else
+      False
+  | VSpine (HMeta (x), sp), VSpine (HMeta (x'), sp') ->
+    if x = x' then
+      let _, t = do lookup_meta x in
+      unify_spine t sp sp'
+    else
+      if unify_meta x sp n then
+        True
+      else
+        unify_meta x' sp' m
+  | VSpine (HMeta (x), sp), _ ->
+    unify_meta x sp n
+  | _, VSpine (HMeta (x'), sp') ->
+    unify_meta x' sp' m
   | _, _ -> False
   end
 
-val equal_hd : head -> head -> bool
-let equal_hd hd hd' =
-  let p : head * head = (hd, hd') in
-  match p with
-  | HVar (x), HVar (x') -> x = x'
-  end
-
-let equal_sp_fold t sp sp' =
+let unify_spine t sp sp' =
   let p : list tm * list tm = (sp, sp') in
   match p with
   | Nil, Nil -> True
@@ -245,15 +346,34 @@ let equal_sp_fold t sp sp' =
   | Cons (m, sp), Cons (m', sp') ->
     match norm_tm t with
     | VPi (x, t, u) ->
-      equal_at m m' t && equal_sp_fold (subst_single x m u) sp sp'
+      unify_at m m' t && unify_spine (subst_single x m u) sp sp'
     | _ -> False
     end
   end
 
-let equal_sp h sp h' sp' =
-  equal_hd h h' &&
-  match h with
-  | HVar (x) -> equal_sp_fold (do lookup_var x) sp sp'
+let abstract_meta t ys sp m =
+  match sp with
+  | Nil -> Some (m)
+  | Cons (n, sp) ->
+    let VPi (x, t, u) = norm_tm t in
+    match norm_tm' n with
+    | Var (y) ->
+      if mem_int y ys then
+        None
+      else
+        match abstract_meta (subst_single x (Var (y)) u) (Cons (y, ys)) sp m with
+        | None -> None
+        | Some (e') -> Some (Lam (y, t, e'))
+        end
+    | _ -> None
+    end
+  end
+
+let unify_meta x sp m =
+  let _, t = do lookup_meta x in
+  match abstract_meta t Nil sp m with
+  | None -> False
+  | Some (e) -> do set_meta (x, e)
   end
 
 -- typecheck -------------------------------------------------------------------
@@ -288,6 +408,7 @@ let infer e =
       (App (m, n), subst_single x n u)
     | t -> (do expected_fun t) @ (tm * tm)
     end
+  | SHole -> (do cannot_infer_hole ()) @ (tm * tm)
   end
 
 let check e t =
@@ -300,17 +421,33 @@ let check e t =
         Lam (x, t, check m (subst_single y (Var (x)) u)))
     | t -> (do expected_fun t) @ tm
     end
+  | SHole -> do fresh_meta t
   | _ ->
     let e, t' = infer e in
-    if equal_at t t' Type then
+    if unify_at t t' Type then
       e
     else
       (do type_mismatch (t, t')) @ tm
   end
 
+val resolve_tm : [error, context](tm -> tm)
+let resolve_tm m =
+  match m with
+  | Var (x) -> Var (x)
+  | Meta (x) ->
+    match do lookup_meta x with
+    | Some (e), _ -> resolve_tm e
+    | None, _ -> (do cannot_infer_hole ()) @ tm
+    end
+  | App (m, n) -> App (resolve_tm m, resolve_tm n)
+  | Lam (x, t, m) -> Lam (x, resolve_tm t, resolve_tm m)
+  | Pi (x, t, u) -> Pi (x, resolve_tm t, resolve_tm u)
+  | Type -> Type
+  end
+
 val top_level : forall [a] . [](<state, context, error>{a} -> a)
 let top_level c =
-  with_print_error @a {with_empty_context @a {with_state @a c 0}}
+  with_print_error @a {with_state @a {with_empty_context @a c Nil} 0}
 
 val check_top_level : [](surface -> tm -> tm)
 let check_top_level s t =
@@ -318,7 +455,7 @@ let check_top_level s t =
 
 val infer_top_level : [](surface -> tm * tm)
 let infer_top_level s =
-  top_level @(tm * tm) {infer s}
+  top_level @(tm * tm) {let m, t = infer s in (eval_tm (resolve_tm m), eval_tm (resolve_tm t))}
 
 val main : [](unit -> unit)
 let main u =

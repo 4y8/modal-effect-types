@@ -1,0 +1,5 @@
+(executable
+ (name met)
+ (preprocess (pps ppx_deriving.show))
+ (libraries bindlib core)
+ (promote (until-clean)))

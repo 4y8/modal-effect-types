@@ -4,8 +4,7 @@
  (modules parser)
  (flags --explain --dump --strict)
  (infer true))
-(executable
- (name met)
+
+(library
  (preprocess (pps ppx_deriving.show))
- (libraries bindlib)
- (promote (until-clean)))
+ (name core))

@@ -9,6 +9,7 @@ type value
   | VInt of int
   | VStr of string
   | VCon of string * value list
+[@@deriving show]
 
 type _ Effect.t += Do : string * value -> value t
 
@@ -26,6 +27,8 @@ let vbool = function
 
 let unbool = (=) (VCon ("True", []))
 
+exception Fail
+
 let stdlib =
   SMap.of_list
   [ "+", VClo (fun x -> VClo (fun y -> VInt (unint x + unint y)))
@@ -35,7 +38,7 @@ let stdlib =
   ; "string_eq", VClo (fun x -> VClo (fun y -> vbool (unstr x = unstr y)))
   ; "^", VClo (fun x -> VClo (fun y -> VStr (unstr x ^ unstr y)))
   ; "&&", VClo (fun x -> VClo (fun y -> vbool (unbool x && unbool y)))
-  ; "fail", VClo (fun _ -> exit 1)
+  ; "fail", VClo (fun _ -> raise Fail)
   ; "print", VClo (fun x -> print_endline (unstr x); VCon ("Unit", []))
   ]
 
@@ -96,5 +99,5 @@ let eval_prog p =
   let first _ x y = match x with None -> y | _ -> x in
   ctx := SMap.(merge first (of_list (List.map (Pair.map_snd (eval ctx [])) p)) stdlib);
   match SMap.find "main" !ctx with
-  | VClo f -> f (VCon ("Unit", []))
+  | VClo f -> ignore (f (VCon ("Unit", []))); !ctx
   | _ -> failwith "main should be a function"

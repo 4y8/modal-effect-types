@@ -7,4 +7,5 @@
 
 (library
  (preprocess (pps ppx_deriving.show))
+ (libraries bindlib)
  (name core))

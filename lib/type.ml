@@ -33,10 +33,10 @@ let not_cons loc c _ = Error.error loc
     (fun fmt -> Format.fprintf fmt
         "Constructor %s is not of the good type" c)
 
-let nb_arg_mismatch loc e a b = Error.error loc
+let nb_arg_mismatch loc e n l = Error.error loc
     (fun fmt -> Format.fprintf fmt
         "Wrong number of arguments for %s, expected %d, got %d"
-        e (List.length a) (List.length b))
+        e n (List.length l))
 
 let rec is_val = function
   | SVar _ -> true
@@ -50,32 +50,29 @@ let is_mod = function TMod _ -> true | _ -> false
 
 let is_forall = function TForA _ -> true | _ -> false
 
-let rec check_type ?(s=[]) ctx t = match t.stype with
-  | STMod (m, t) -> TMod (check_mod ctx m, check_type ~s ctx t)
-  | STArr (t, t') -> TArr (check_type ~s ctx t, check_type ctx t' ~s)
-  | STForA (x, k, t) ->
-    TForA (x, k, check_type ~s:(List.remove_assoc x s) (ctx <: BType (x, k)) t)
+let rec check_type ctx t = match t.stype with
+  | STMod (m, t) -> TMod (check_mod ctx m, check_type ctx t)
+  | STArr (t, t') -> TArr (check_type ctx t, check_type ctx t')
+  | STForA (x, k, a) ->
+    let ctx, v = fresh_tvar ctx x k in
+    let a = check_type ctx a in
+    TForA (k, Bindlib.unbox (Bindlib.bind_var v (box_type a)))
   | STCons (c, l) ->
     begin match List.assoc_opt c ctx.data with
       | None -> unknown_var t.tloc c
-      | Some (args, _) ->
-        if List.length args <> List.length l then
-          nb_arg_mismatch t.tloc c args l;
-        TCons (c, List.map (check_type ~s ctx) l)
+      | Some (n, _) ->
+        if n <> List.length l then
+          nb_arg_mismatch t.tloc c n l;
+        TCon (c, Array.of_list @@ List.map (check_type ctx) l)
     end
   | STVar x ->
-    match List.assoc_opt x s with
-    | Some t -> t
+    match List.assoc_opt x ctx.tid with
+    | Some v ->
+      TVar v
     | None ->
-      match get_kind ctx.gamma x with
-      | Some k ->
-        if k = Effect then
-          kind_mismatch t.tloc t k Any;
-        TVar (x, k)
-      | None ->
-        match List.assoc_opt x ctx.data with
-        | None -> unknown_var t.tloc x
-        | Some _ -> TCons (x, [])
+      match List.assoc_opt x ctx.data with
+      | None -> unknown_var t.tloc x
+      | Some _ -> TCon (x, [||])
 
 and check_mod ctx m = match m.smod with
   | SMAbs e -> MAbs (check_effect_ctx ctx e)
@@ -86,16 +83,16 @@ and check_effect_ctx ctx l =
   List.map (fun {seff_name; seff_args; eloc} ->
       match List.assoc_opt seff_name ctx.effects with
       | None -> unknown_eff eloc seff_name
-      | Some (args, t) ->
-        if List.length args <> List.length seff_args then
-          nb_arg_mismatch eloc seff_name args seff_args;
-        let s = List.combine args (List.map (check_type ctx) seff_args) in
-        List.map (fun { eff_type = (a, b); eff_name } ->
-            let a = Subst.pure_type s a in
-            let b = Subst.pure_type s b in
-            if not (is_abs a) then kind_mismatch eloc a Abs Any;
-            if not (is_abs b) then kind_mismatch eloc b Abs Any;
-            { eff_name ; eff_type = a, b }) t
+      | Some (n, t) ->
+        if n <> List.length seff_args then
+          nb_arg_mismatch eloc seff_name n seff_args;
+        let args = List.map (check_type ctx) seff_args
+                |> Array.of_list in
+        let ectx = Bindlib.msubst t args in
+        List.iter (fun { eff_type = (a, b); _ } ->
+            if not (is_abs ctx a) then kind_mismatch eloc a Abs Any;
+            if not (is_abs ctx b) then kind_mismatch eloc b Abs Any) ectx;
+        ectx
     ) l |> List.flatten
 
 and check_mask ctx = function
@@ -112,37 +109,48 @@ let split_arr loc = function
     expected_arr loc a
 
 let split_forall loc = function
-  | TForA (x, k, t) -> x, k, t
+  | TForA (k, a) -> k, a
   | a -> expected_forall loc a
 
+let split_foralls a =
+  let rec aux l = function
+    | TForA (k, b) ->
+      let v, a = Bindlib.unbind b in
+      aux ((v, k) :: l) a
+    | a -> a, l
+  in Pair.map_snd List.rev @@ aux [] a
+
 let split_cons loc = function
-  | TCons (c, l) -> c, l
+  | TCon (c, l) -> c, l
   | a -> expected_cons loc a
 
-let rec split_pat ctx mu t { spat; ploc } =
+let rec split_pat ctx vars mu t { spat; ploc } =
   let nu, g = get_guarded t in
   let mu = Effects.compose mu nu in
   match spat with
-  | SPWild -> ctx
-  | SPVar x -> ctx <: BVar (x, TMod (mu, g))
+  | SPWild -> (ctx, vars), PWild
+  | SPVar x ->
+    let ctx, v = fresh_var ctx x (TMod (mu, g)) in
+    (ctx, (v :: vars)), PVar (TMod (mu, g))
   | SPCons (c, l) ->
     let tc, tl = split_cons ploc g in
-    let args, cons = List.assoc tc ctx.data in
+    let _, cons = List.assoc tc ctx.data in
     let tcons = match List.assoc_opt c cons with
       | None -> not_cons ploc c g
-      | Some tcons ->
-        let s = List.combine args tl in
-        List.map (Subst.pure_type s) tcons
+      | Some tcons -> Bindlib.msubst tcons tl
     in
-    List.fold_right (fun (a, p) ctx ->
-        split_pat ctx mu a p) (List.combine tcons l) ctx
+    let res, l = List.fold_right
+        (fun (a, p) ((ctx, vars), l) ->
+           Pair.map_snd (fun x -> x :: l) @@ split_pat ctx vars mu a p)
+        (List.combine tcons l) ((ctx, vars), [])
+    in res, PCon (c, l)
 
-let join_type loc f t t' =
+let join_type loc ctx f t t' =
   let mu, g = get_guarded t in
   let nu, g' = get_guarded t' in
   if g = g' then
     type_mismatch loc g g';
-  if is_abs g then
+  if is_abs ctx g then
     g
   else match Effects.join_mod mu nu f with
     | None -> mod_mismatch loc mu nu g
@@ -159,135 +167,170 @@ let rec check ctx ({loc; sexpr} as m) a e =
     end
   (* B-Forall *)
   | v when is_val v && is_forall a ->
-    let x, k, a = split_forall loc a in
-    check (ctx <: BType (x, k)) m a e
+    let k, a = split_forall loc a in
+    let v, a = Bindlib.unbind a in
+    check (ctx <: BType (v, k)) m a e
   (* B-Abs *)
   | SLam (x, m) ->
     let (a, b) = split_arr loc a in
-    check (ctx <: BVar (x, a)) m b e
+    let ctx, v = fresh_var ctx x a in
+    let m = check ctx m b e in
+    Lam (a, Bindlib.(box_expr m |> bind_var v |> unbox))
   (* B-HandlerCheck *)
   | SHand (m, d, (l, (x, n))) ->
     let b = a in (* stay consistent with the paper *)
     let d = check_effect_ctx ctx d in
-    let a = infer (ctx <: Lock (MRel ([], d), e)) m (d @ e) in
-    check (ctx <: BVar (x, TMod (MRel ([], d), a))) n b e;
+    let m, a = infer (ctx <: Lock (MRel ([], d), e)) m (d @ e) in
+    let ctx', ret = fresh_var ctx x (TMod (MRel ([], d), a)) in
+    let n = Bindlib.(check ctx' n b e |> box_expr |> bind_var ret |> unbox) in
     let check_clause (li, (loc, pi, ri, ni)) =
       match Effects.get_eff li d with
       | None -> unknown_eff loc li
       | Some (ai, bi) ->
-        let ctx = ctx <: BVar (pi, ai) <: BVar (ri, TArr (bi, b)) in
-        check ctx ni b e
+        let ctx, pi = fresh_var ctx pi ai in
+        let ctx, ri = fresh_var ctx ri (TArr (bi, b)) in
+        li, Bindlib.(check ctx ni b e |> box_expr |> bind_var ri |> bind_var pi
+                  |> unbox)
     in
-    List.iter check_clause l
+    Hand (m, d, n,  List.map check_clause l)
   (* B-CrispSumCheck and B-CrispPairCheck *)
   | SMatch (v, l) ->
-    (*if not (is_val v.sexpr) then
-       expected_val v.loc v;*)
-    let t = infer ctx v e in
-    List.iter (fun (p, n) ->
-        let ctx = split_pat ctx Effects.id t p in
-        check ctx n a e) l
+    let m, t = infer ctx v e in
+    let l =
+      List.map (fun (p, n) ->
+          let (ctx, vars), p = split_pat ctx [] Effects.id t p in
+          let mvar = Array.of_list vars in
+          p, Bindlib.(check ctx n a e |> box_expr |> bind_mvar mvar |> unbox)) l
+    in Match (m, l)
   | SSeq (m, n) ->
-    let _ = check ctx m (TCons ("unit", [])) e in
-    check ctx n a e
+    let m = check ctx m (TCon ("unit", [||])) e in
+    let dummy = Bindlib.new_var (fun v -> Var v) "unit" in
+    Let (m, TCon ("unit", [||]),
+         Bindlib.(check ctx n a e |> box_expr |> bind_var dummy |> unbox))
   | SCons (c, l) ->
     let tc, tl = split_cons loc a in
-    let tcargs, constructors = List.assoc tc ctx.data in
+    let _, constructors = List.assoc tc ctx.data in
     begin
       match List.assoc_opt c constructors with
       | None -> unknown_cons loc c tc
       | Some cargs ->
-        let cargs = List.map (Subst.pure_type (List.combine tcargs tl)) cargs in
+        let cargs = Bindlib.msubst cargs tl in
         if List.length cargs <> List.length l then
-          nb_arg_mismatch loc c cargs l;
-        List.iter2 (fun n b -> check ctx n b e) l cargs
+          nb_arg_mismatch loc c (List.length cargs) l;
+        Con (c, List.map2 (fun n b -> check ctx n b e) l cargs)
   end
   | SLet (x, m, n) ->
-    let t = infer ctx m e in
-    check (ctx <: BVar (x, t)) n a e
+    let m, t = infer ctx m e in
+    let ctx, v = fresh_var ctx x t in
+    Let (m, t, Bindlib.(check ctx n a e |> box_expr |> bind_var v |> unbox))
   (* B-Switch *)
   | _ ->
-    let mu, g = get_guarded (infer ctx m e) in
+    let m, b = infer ctx m e in
+    let mu, g = get_guarded b in
     let nu, g' = get_guarded a in
-    if g <> g' then type_mismatch loc g g'
+    if not Effects.(eq_ty g g') then type_mismatch loc g g'
     else
-      if not (Effects.sub_mod mu nu e) && not (is_abs g) then
+      if not (Effects.sub_mod mu nu e) && not (is_abs ctx g) then
         mod_mismatch loc mu nu g
+      else
+        m
 
 and infer ctx {loc; sexpr} e =
   match sexpr with
   (* B-Var *)
   | SVar x ->
-    begin match get_type_context ctx.gamma x with
+    begin match List.assoc_opt x ctx.id with
       | None -> unknown_var loc x
-      | Some (a, gamma') ->
+      | Some v ->
+        let a, gamma' = get_type_context ctx.gamma v in
         let nu, f = locks e gamma' in
-        match across a nu f with
+        match across ctx a nu f with
         | None -> no_access loc x ctx e
-        | Some t -> t
+        | Some t -> Var v, t
     end
   (* B-Annotation *)
   | SAnn (m, a) ->
     let a = check_type ctx a in
-    check ctx m a e;
-    a
+    let m = check ctx m a e in
+    m, a
+
   (* B-App *)
   | SApp (m, n) ->
-    let mu, g = get_guarded (infer ctx m e) in
+    let m, a = infer ctx m e in
+    let mu, g = get_guarded a in
     let a, b = split_arr loc g in
     if not Effects.(sub_mod mu id e) then
       no_unboxing loc mu e;
-    check ctx n a e;
-    b
+    let n = check ctx n a e in
+    App (m, n), b
+
   (* B-AppT *)
-  | SAppT (m, ({tloc; _} as t)) ->
-    let t = check_type ctx t in
-    let mu, g = get_guarded (infer ctx m e) in
+  | SAppT (m, ({tloc; _} as a)) ->
+    let a = check_type ctx a in
+    let m, b = infer ctx m e in
+    let mu, g = get_guarded b in
     if not Effects.(sub_mod mu id e) then
       no_unboxing loc mu e;
-    let x, k, b = split_forall loc g in
-    if k = Abs && not (is_abs t) then
-      kind_mismatch tloc t Abs Any;
-    Subst.pure_type [x, t] b
+    let k, b = split_forall loc g in
+    if k = Abs && not (is_abs ctx a) then
+      kind_mismatch tloc a Abs Any;
+    m, Bindlib.subst b a
+
   (* B-Do *)
   | SDo (l, m) ->
     let (a, b) = match Effects.get_eff l e with
       | None -> unknown_eff loc l
       | Some p -> p
     in
-    check ctx m a e;
-    b
+    let m = check ctx m a e in
+    Do (l, m), b
+
   (* B-HandlerInfer *)
   | SHand (m, d, (l, (x, n))) ->
     let d = check_effect_ctx ctx d in
-    let a = infer (ctx <: Lock (MRel ([], d), e)) m (d @ e) in
-    let b' = infer (ctx <: BVar (x, TMod (MRel ([], d), a))) n e in
+    let m, a = infer (ctx <: Lock (MRel ([], d), e)) m (d @ e) in
+    let ctx', ret = fresh_var ctx x (TMod (MRel ([], d), a)) in
+    let n, b' = infer ctx' n e in
+    let n = Bindlib.(box_expr n |> bind_var ret |> unbox ) in
     let infer_clause (li, (loc, pi, ri, ni)) =
       match Effects.get_eff li d with
       | None -> unknown_eff loc li
       | Some (ai, bi) ->
-        let ctx = ctx <: BVar (pi, ai) <: BVar (ri, TArr (bi, b')) in
-        infer ctx ni e
+        let ctx, pi = fresh_var ctx pi ai in
+        let ctx, ri = fresh_var ctx ri (TArr (bi, b')) in
+        let ni, bi = infer ctx ni e in
+        (li, Bindlib.(box_expr ni |> bind_var ri |> bind_var pi |> unbox)), bi
     in
-    let bi = List.map infer_clause l in
-    List.fold_left (join_type loc e) b' bi
-  | SInt _ -> TCons ("int", [])
-  | SStr _ -> TCons ("string", [])
+    let h, bi = List.map infer_clause l |> List.split in
+    let b = List.fold_left (join_type loc ctx e) b' bi in
+    Hand (m, d, n, h), b
+  | SInt n -> Lit (Int n), TCon ("int", [||])
+  | SStr s -> Lit (Str s), TCon ("string", [||])
+
   (* B-CrispSumInfer and B-CrispPairInfer *)
   | SMatch (v, l) ->
     if not (is_val v.sexpr) then
       expected_val v.loc v;
-    let t = infer ctx v e in
-    let types = List.map (fun (p, n) ->
-        let ctx = split_pat ctx Effects.id t p in
-        infer ctx n e) l in
-    List.fold_left (join_type loc e) (List.hd types) (List.tl types)
+    let m, t = infer ctx v e in
+    let c, types = List.map (fun (p, n) ->
+        let (ctx, vars), p = split_pat ctx [] Effects.id t p in
+        let mvar = Array.of_list vars in
+        let n, t = infer ctx n e in
+        (p, Bindlib.(box_expr n |> bind_mvar mvar |> unbox)), t) l
+      |> List.split in
+    let a = List.(fold_left (join_type loc ctx e) (hd types) (tl types)) in
+    Match (m, c), a
   | SSeq (m, n) ->
-    let _ = check ctx m (TCons ("unit", [])) e in
-    infer ctx n e
+    let m = check ctx m (TCon ("unit", [||])) e in
+    let dummy = Bindlib.new_var (fun v -> Var v) "unit" in
+    let n, a = infer ctx n e in
+    Let (m, TCon ("unit", [||]),
+         Bindlib.(n |> box_expr |> bind_var dummy |> unbox)), a
   | SLet (x, m, n) ->
-    let t = infer ctx m e in
-    infer (ctx <: BVar (x, t)) n e
+    let m, a = infer ctx m e in
+    let ctx, v = fresh_var ctx x a in
+    let n, b = infer ctx n e in
+    Let (m, a, Bindlib.(n |> box_expr |> bind_var v |> unbox)), b
   | _ ->
     print_endline (show_surface_desc sexpr);
     failwith "todo"
@@ -295,44 +338,62 @@ and infer ctx {loc; sexpr} e =
 let check_decl (ctx, prog) d = match d with
   | (x, SDSig t), _ ->
     let t = check_type ctx t in
-    let t = if is_mod t then t else TMod (MAbs [], t) in
-    ctx <: BVar (x, t), prog
+    let ctx, _ = fresh_var ctx x t in
+    ctx, prog
   | (x, SDFun e), loc ->
-    let t = match get_type_context ctx.gamma x with
+    let v = match List.assoc_opt x ctx.id with
       | None -> missing_declaration loc x
-      | Some (t, _) -> t
+      | Some v -> v
     in
-    check ctx e t []; ctx, (x, e) :: prog
+    let a, _ = get_type_context ctx.gamma v in
+    let g, alphas = split_foralls a in
+    let ctx' = { ctx with
+                 tid = List.map (fun (v, _) -> Bindlib.name_of v, v) alphas
+               ; gamma = List.map (fun (v, k) -> BType (v, k)) alphas @
+                         ctx.gamma }
+    in
+    let _ = check ctx' e g [] in ctx, (x, e) :: prog
   | (x, SDEff (args, l)), _ ->
-    let ctx' = List.fold_left (fun ctx x -> ctx <: BType (x, Abs)) ctx args in
+    let ctx', mvar = fresh_tvars ctx (List.map (fun x -> x, Any) args) in
     let l =
       List.map (fun (x, (a, b)) ->
         { eff_name = x; eff_type = check_type ctx' a, check_type ctx' b })
-         l in
-    { ctx with effects = (x, (args, l)) :: ctx.effects }, prog
+        l |> box_effect_ctx in
+    { ctx with
+      effects = (x, (Array.length mvar, Bindlib.(bind_mvar mvar l |> unbox)))
+                :: ctx.effects }, prog
   | (x, SDADT (args, l)), _ ->
     (* add mock definition in the context just for type verification *)
-    let ctx' = { ctx with data = (x, (args, [])) :: ctx.data } in
-    let ctx' = List.fold_left (fun ctx x -> ctx <: BType (x, Any)) ctx' args in
-    let l = List.map (Pair.map_snd (List.map (check_type ctx'))) l in
-    { ctx with data = (x, (args, l)) :: ctx.data }, prog
+    let n = List.length args in
+    let ctx' = { ctx with data = (x, (n, [])) :: ctx.data } in
+    let ctx', mvar = fresh_tvars ctx' (List.map (fun x -> x, Any) args) in
+    let l = List.map
+        (fun (c, l) ->
+           let l = List.map (Fun.compose box_type (check_type ctx')) l
+                |> Bindlib.box_list in
+           c, Bindlib.(bind_mvar mvar l |> unbox)) l in
+    { ctx with data = (x, (n, l)) :: ctx.data }, prog
 
 let check_prog =
-  let int = TCons ("int", []) in
-  let bool = TCons ("bool", []) in
-  let string = TCons ("string", []) in
-  let unit = TCons ("unit", []) in
+  let int = TCon ("int", [||]) in
+  let bool = TCon ("bool", [||]) in
+  let string = TCon ("string", [||]) in
+  let unit = TCon ("unit", [||]) in
   let (@->) t t' = TArr (t, t') in
-  let init_ctx = { gamma = [BVar ("+", TMod (MAbs [], int @-> int @-> int));
-                            BVar ("*", TMod (MAbs [], int @-> int @-> int));
-                            BVar ("-", TMod (MAbs [], int @-> int @-> int));
-                            BVar ("=", TMod (MAbs [], int @-> int @-> bool));
-                            BVar ("string_eq", TMod (MAbs [], string @-> string @-> bool));
-                            BVar ("^", TMod (MAbs [], string @-> string @-> string));
-                            BVar ("&&", TMod (MAbs [], bool @-> bool @-> bool));
-                            BVar ("fail", TMod (MAbs [], TForA ("f", Any, unit @-> (TVar ("f", Any)))));
-                            BVar ("print", TMod (MAbs [], string @-> unit))
-                           ]
-                 ; effects = []
-                 ; data = ["int", ([], []); "string", ([], [])] } in
+  let v = Bindlib.new_var (fun v -> TVar v) "fail" in
+  let init_ctx, _ =
+    fresh_vars
+      { gamma = [] ; tid = [] ; id = [] ; effects = []
+      ; data = ["int", (0, []); "string", (0, [])] }
+      [("+", TMod (MAbs [], int @-> int @-> int));
+       ("*", TMod (MAbs [], int @-> int @-> int));
+       ("-", TMod (MAbs [], int @-> int @-> int));
+       ("=", TMod (MAbs [], int @-> int @-> bool));
+       ("string_eq", TMod (MAbs [], string @-> string @-> bool));
+       ("^", TMod (MAbs [], string @-> string @-> string));
+       ("&&", TMod (MAbs [], bool @-> bool @-> bool));
+       ("fail", TMod (MAbs [],
+                      TForA (Any, Bindlib.(unit @-> (TVar v) |> box_type |> bind_var v |> unbox))));
+       ("print", TMod (MAbs [], string @-> unit))]
+  in
   Fun.compose snd (List.fold_left check_decl (init_ctx, []))

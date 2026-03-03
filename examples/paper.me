@@ -1,13 +1,13 @@
 type unit = Unit
 type int = Zero | Succ of int
 type list a = Nil | Cons of a, list a
-val iter : [](forall a . (a -> unit) -> list a -> unit)
+val iter : forall a . []((a -> unit) -> list a -> unit)
 let iter f l =
   match l with
   | Nil -> ()
   | Cons (hd, tl) -> f hd; iter @a f tl
   end
-val append : [](forall a . list a -> list a -> list a)
+val append : forall a . [](list a -> list a -> list a)
 let append l l' =
   match l with
   | Nil -> l'
@@ -82,3 +82,6 @@ let schedule m =
   | suspend u r => fun ps -> next (push (Proc (fun ps' -> r () ps')) ps)
   | ufork u r => fun ps -> r True (push (Proc (fun ps' -> r False ps')) ps)
   end
+
+val main : [](unit -> unit)
+let main u = ()

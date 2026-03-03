@@ -52,7 +52,7 @@ let rec extract e l = match e with
   | [] -> if l = [] then Some [] else None
   | hd :: tl -> match find_label_mask hd.eff_name l with
     | None -> extract tl l
-    | Some l -> Option.map (fun e -> hd :: e) (extract tl l) 
+    | Some l -> Option.map (fun e -> hd :: e) (extract tl l)
 
 (* Appendix D.1 *)
 let right_residual m m' f = match m, m' with
@@ -67,12 +67,29 @@ let right_residual m m' f = match m, m' with
 let rec sub_eff e f =
   match e with
   | [] -> true
-  | {eff_type; eff_name} :: tl ->
+  | {eff_type = a, b; eff_name} :: tl ->
     match find_label_eff eff_name f with
     | None -> false
-    | Some ({eff_type = t'; _}, f') -> eff_type = t' && sub_eff tl f'
+    | Some ({eff_type = a', b'; _}, f') ->
+      eq_ty a a' && eq_ty b b' && sub_eff tl f'
 
-let (===) e f = sub_eff e f && sub_eff f e
+and eq_ty a b = a == b ||
+  match a, b with
+  | TVar v, TVar v' -> Bindlib.eq_vars v v'
+  | TCon (c, l), TCon (c', l') -> c = c' && Array.for_all2 eq_ty l l'
+  | TArr (a, b), TArr (a', b') -> eq_ty a a' && eq_ty b b'
+  | TMod (m, a), TMod (m', a') -> eq_mod m m' && eq_ty a a'
+  | TForA (k, b), TForA (k', b') -> k = k' && Bindlib.eq_binder eq_ty b b'
+  | _, _ -> false
+
+and eq_mod m m' =
+  match m, m' with
+  | MAbs e, MAbs e' -> e === e'
+  | MRel (l, d), MRel (l', d') ->
+    List.sort compare l = List.sort compare l' && d === d'
+  | _, _ -> false
+
+and (===) e f = sub_eff e f && sub_eff f e
 
 (* from wenhao's implementation : mu f => nu f *)
 let sub_mod mu nu f = match mu, nu with

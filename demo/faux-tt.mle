@@ -169,7 +169,7 @@ val with_var : forall [a] . [context](int -> tm -> <context>{a} -> a)
 let with_var x c =
   with_bind @a "" x c
 
-val find_meta : int -> list (int * (option tm * tm)) -> option tm * tm
+val find_meta : [](int -> list (int * (option tm * tm)) -> option tm * tm)
 let find_meta x l =
   match l with
   | Nil -> fail @(option tm * tm) ()
@@ -254,7 +254,7 @@ let norm_tm' m =
     end
   end
 
-val fold_spine : (tm -> list tm -> head * list tm)
+val fold_spine : [](tm -> list tm -> head * list tm)
 let fold_spine m sp =
   match m with
   | Var (x) -> (HVar (x), sp)

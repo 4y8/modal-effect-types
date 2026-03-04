@@ -16,6 +16,9 @@
 \renewcommand{\baselinestretch}{1.06}
 \newcommand{\subt}{ <: }
 \newcommand{\kmod}{\normalfont\textsf{\textbf{mod}}}
+\newcommand{\ectx}[1]{\;@\;{\color{cyan} #1}}
+\newcommand{\elab}[1]{{\color{gray}\dashrightarrow #1}}
+
 %\usepackage{MnSymbol}
 \usepackage{inconsolata}
 \usepackage[scaled=0.92]{sourcesanspro}
@@ -100,7 +103,7 @@ is a context of the form: $\Gamma_L,\Delta,\Gamma_R$.
 
 \subsubsection{Subtyping and instantiation.}
 We have the same algorithmic subtyping and instantiation rules to which we add
-the rule \textsc{Sub-Modality} to cross modalities when they are the same on
+the rule \textsc{Sub-Mod} to cross modalities when they are the same on
 both sides; there is no rule for instantiation with modalities. And each rule
 has now an elaboration part in which we may omit type annotations when they are
 obvious.
@@ -153,7 +156,7 @@ of having the same kind through the whole rule.
     {{\Gamma}[\hat{\alpha}]\vdash A\subt \hat{\alpha}\dashv\Delta
       {\color{gray} \dashrightarrow M}}
 
-  \inferrule[Sub-Modality]{\Gamma\vdash A\subt B\dashv\Delta{\color{gray} \dashrightarrow M}}
+  \inferrule[Sub-Mod]{\Gamma\vdash A\subt B\dashv\Delta{\color{gray} \dashrightarrow M}}
     {\Gamma\vdash\mu A\subt\mu B\dashv\Delta{\color{gray} \dashrightarrow \lambda x^A . (\lambda y^B. \kmod_\mu y) (M x) }}
   \end{mathpar}
 
@@ -236,12 +239,63 @@ The following lemma guarantees the soundness of elaboration.
 We take the rules of \textsf{METL} (Appendix~D of~\cite{tang2025modal}) as a
 starting point, remove the rules of both application and type application and
 try to add the new inference rule for application --- I will try to add
-inference for abstraction later.
+inference for abstraction later. We also give a new rule for switching from
+checking to inference mode.
+
+We define $\kmod_\mu M$ to be $(\lambda x. \kmod_{\mu} x) M$
 \begin{figure}
   \begin{mathpar}
+    \inferrule[B-Switch]
+      {\Gamma\vdash M\Rightarrow\overline{\mu}G'\ectx{E}
+        {\color{gray} \dashrightarrow M'}\\
+       (G,\overline{\mu})\Rightarrow\overline{\nu}\ectx{E}\\
+       \Gamma\vdash G' <: G \dashv \Delta {\color{gray} \dashrightarrow f}\\
+       {\color{gray}N = \textsf{\textbf{let mod}}_{\overline{\mu}} x = M'
+        \textsf{ in } \kmod_{\overline{\nu}} (f x)}}
+      {\Gamma\vdash M \Leftarrow\overline{\nu}G' \dashv\Delta\ectx{E}
+       {\color{gray} \dashrightarrow N}}
 
+    \inferrule[B-App]
+      {\Gamma\vdash M\Rightarrow A\dashv\Delta\ectx{E}
+       {\color{gray} \dashrightarrow M'}\\
+       \Delta\vdash ({\color{gray}M':\ } A) \bullet N \Rrightarrow
+       C\dashv\Theta\ectx{E}
+       {\color{gray} \dashrightarrow M''}}
+      {\Gamma \vdash M N:C\dashv\Theta\ectx{E}
+        {\color{gray} \dashrightarrow M''}}
+
+    \inferrule[App-Fun]
+      {\Gamma\vdash N\Leftarrow A\dashv\Delta\ectx{E}
+       {\color{gray} \dashrightarrow N'}}
+      {\Gamma\vdash ({\color{gray}M:\ }A\to C) \bullet N \Rrightarrow C\dashv\Delta\ectx{E}
+       \elab{M N'}}
+
+    \inferrule[App-ExVar]
+      {{\Gamma}[{\hat{\alpha}}_2:\textsf{Any}, {\hat{\alpha}}_1 : \textsf{Any},
+                 \hat{\alpha}={\hat{\alpha}}_1\to{\hat{\alpha}}_2]
+        \vdash N {\Leftarrow} {\hat{\alpha}}_1\dashv\Delta
+        \ectx{E}\elab{N'}}
+      {{\Gamma}[\hat{\alpha}:\textsf{Any}]\vdash
+        ({\color{gray}M:\ } \hat{\alpha})\bullet N{\Rrightarrow}
+        {\hat{\alpha}}_2\dashv\Delta\ectx{E}\elab{M N'}}
+
+    \inferrule[App-All]
+      {\Gamma,\hat{\alpha}:K\vdash ({\color{gray}M\hat{\alpha}:\ } [\hat{\alpha}/\alpha]A)
+        \bullet N\Rrightarrow C\dashv\Delta\ectx{E}\elab{M'}}
+      {
+        \Gamma\vdash ({\color{gray}M:\ } \forall\alpha:K.A) \bullet N \Rrightarrow C\dashv\Delta\ectx{E}
+        \elab{M'}
+      }
+
+    \inferrule[App-Mod]
+      {{\overline{\mu}}_E\Rightarrow\langle\rangle_E\\
+        {\color{gray} M'=\textsf{unmod}(M;\overline{\mu})}\\
+        \Gamma\vdash ({\color{gray}M':\ } G) \bullet N \Rrightarrow C\dashv\Delta\ectx{E}
+        \elab{M''}}
+      {{\Gamma}\vdash
+        ({\color{gray} M :\ } \overline{\mu}G)\bullet N{\Rrightarrow} C
+        \dashv\Delta\ectx{E}\elab{M''}}
   \end{mathpar}
-
   \caption{Algorithmic typing}
 \end{figure}
 
@@ -257,7 +311,7 @@ against $<\textsf{Gen int}>(1\to1)$.
 
 A complete algorithm may not exist, but we may do better than plain assignation
 by recording inequalities modulo effect context in the context:
-$\hat{\alpha}\leq \tau\,@\,E$. Elaboration becomes more involved as there are
+$\hat{\alpha}\leq \tau\ectx{E}$. Elaboration becomes more involved as there are
 now holes with functions that can only be filled when a definition for the type
 variable is chosen.
 

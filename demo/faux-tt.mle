@@ -455,7 +455,8 @@ let check_top_level s t =
 
 val infer_top_level : [](surface -> tm * tm)
 let infer_top_level s =
-  top_level @(tm * tm) {let m, t = infer s in (eval_tm (resolve_tm m), eval_tm (resolve_tm t))}
+  top_level @(tm * tm)
+    {let m, t = infer s in (eval_tm (resolve_tm m), eval_tm (resolve_tm t))}
 
 val main : [](unit -> unit)
 let main u =

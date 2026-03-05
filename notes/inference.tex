@@ -77,9 +77,9 @@ with one that has a top-level modality.
 \subsubsection{Which subtyping relation?}
 The original algorithm relies heavily on a subtyping relation, which we shall
 adapt to \textsf{MET} types. To support unification from \textsf{METL} to
-\textsf{MET}, the subtyping algorithm also has an elaboration part which
-rewrites gives a function from $A$ to $B$ when $A$ is a subtype of $B$:
-$\Gamma\vdash A\textsf{ <: }B\dashv\Delta{\color{gray} \dashrightarrow M}$.
+\textsf{MET}, the subtyping algorithm also has an elaboration part which gives a
+function from $A$ to $B$ when $A$ is a subtype of $B$: $\Gamma\vdash A\textsf{
+  <: }B\dashv\Delta{\color{gray} \dashrightarrow M}$.
 
 Support for modalities in subtyping will come later. I start by only allowing
 different modalities on the top-level. And using equality of modalities inside
@@ -240,10 +240,14 @@ We take the rules of \textsf{METL} (Appendix~D of~\cite{tang2025modal}) as a
 starting point, remove the rules of both application and type application and
 try to add the new inference rule for application --- I will try to add
 inference for abstraction later. We also give a new rule for switching from
-checking to inference mode.
+checking to inference mode. In elaboration, we define $\kmod_\mu M$ to be
+$(\lambda x. \kmod_{\mu} x) M$.
 
-We define $\kmod_\mu M$ to be $(\lambda x. \kmod_{\mu} x) M$
-\begin{figure}
+The rule \textsc{B-Switch} combines the switching from both algorithms. We add a
+new rule for application (\textsc{App-Mod}) that deals with modalities in the
+same way the original \textsf{METL} \textsc{B-App} rule did. This formulation
+allows interleaving modalities and quantifiers.
+\begin{figure}[h]
   \begin{mathpar}
     \inferrule[B-Switch]
       {\Gamma\vdash M\Rightarrow\overline{\mu}G'\ectx{E}
@@ -297,6 +301,49 @@ We define $\kmod_\mu M$ to be $(\lambda x. \kmod_{\mu} x) M$
         \dashv\Delta\ectx{E}\elab{M''}}
   \end{mathpar}
   \caption{Algorithmic typing}
+\end{figure}
+
+We omitted the inference rules that relying on the join operation, but we modify
+its definition by redifining it on types. We state the rules for joining types
+in Figure~\ref{join}. The join operation is now presented as a judgement that
+outputs a new context and a coercion function. This new operation is then used
+by the elaboration function \textsf{join}, which should insert coercion
+functions.
+
+The rule \textsc{Join-Abs} is correct because of the following lemma that
+guarantees that $[\Delta]A$ is pure if and only if $[\Delta]B$.
+\begin{lemma}
+  If $\Gamma\vdash A<:B \dashv\Delta$ and
+  $\Delta{\vdash}[\Delta]B:{\normalfont\textsf{Abs}}$, then
+  $\Delta{\vdash}[\Delta]A:{\normalfont\textsf{Abs}}$.
+\end{lemma}
+\begin{figure}[h]
+  \begin{mathpar}
+    \inferrule[]
+      {\Gamma\vdash B<: A\dashv\Delta\elab{M}\\
+       \Delta{\vdash} [\Delta]A<: [\Delta]B\dashv\Theta\elab{N}}
+      {\Gamma\vdash A:=B\dashv\Theta\elab{([\Theta]M, N)}}
+
+    \inferrule[Join-Abs]
+      {\Gamma\vdash G:=G'\dashv\Theta\elab{(M, N)}\\
+       \Delta{\vdash}[\Delta]G:\textsf{Abs}}
+      {\Gamma\vdash\overline{\mu}G\vee\overline{\nu}G' = [\Delta]G\dashv\Delta\ectx{F}
+       \elab{(M, N)}}
+
+    \inferrule[Join-Mod]
+      {\Gamma\vdash G:=G'\dashv\Theta\elab{(M, N)}\\
+       \xi=\overline{\mu}\vee_{\Gamma,F}\overline{\nu}\\
+       \color{gray}
+       N'=\lambda x^{\overline{\mu}G}.\textbf{\textsf{ let mod}}_{\overline{\mu}} x = x \textbf{\textsf{ in }} \kmod_\xi (N x)\\
+       \color{gray}
+       M'=\lambda x^{\overline{\nu}G'}.\textbf{\textsf{ let mod}}_{\overline{\nu}} x = x \textbf{\textsf{ in }} \kmod_\xi (M x)\\
+      }
+      {\Gamma\vdash\overline{\mu}G\vee\overline{\nu}G' = [\Delta]\xi G\dashv\Delta\ectx{F}
+       \elab{(M',N')}}
+  \end{mathpar}
+  \caption{Join operation on types}\label{join}
+
+  
 \end{figure}
 
 \subsection{Subtyping with modalities}

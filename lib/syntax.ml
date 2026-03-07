@@ -85,7 +85,7 @@ and tvar = pure_type Bindlib.var
 
 let tvar_ = Bindlib.box_var
 
-let tmod_ m = Bindlib.box_apply (fun a -> TMod (m, a))
+let tmod_ = Bindlib.box_apply2 (fun m a -> TMod (m, a))
 
 let tarr_ = Bindlib.box_apply2 (fun a b -> TArr (a, b))
 
@@ -93,14 +93,19 @@ let tcon_ c l = Bindlib.box_apply (fun l -> TCon (c, l)) (Bindlib.box_array l)
 
 let tfora_ k = Bindlib.box_apply (fun a -> TForA (k, a))
 
+let mrel_ l = Bindlib.box_apply (fun d -> MRel (l, d))
+
+let mabs_ = Bindlib.box_apply (fun e -> MAbs e)
+
+
 let rec box_type = function
   | TVar v -> tvar_ v
-  | TMod (m, a) -> tmod_ m (box_type a)
+  | TMod (m, a) -> tmod_ (box_mod m) (box_type a)
   | TArr (a, b) -> tarr_ (box_type a) (box_type b)
   | TCon (c, l) -> tcon_ c (Array.map box_type l)
   | TForA (k, a) -> tfora_ k (Bindlib.box_binder box_type a)
 
-let box_effect_ctx e =
+and box_effect_ctx e =
   let pure_effect_ eff_name = Bindlib.box_apply2
       (fun a b -> { eff_name; eff_type = a, b })
   in
@@ -108,6 +113,10 @@ let box_effect_ctx e =
     pure_effect_ eff_name (box_type a) (box_type b)
   in
   Bindlib.box_list (List.map box_effect e)
+
+and box_mod = function
+  | MAbs e -> mabs_ (box_effect_ctx e)
+  | MRel (l, d) -> mrel_ l (box_effect_ctx d)
 
 type concrete_mod = pure_mod * effect_ctx
 

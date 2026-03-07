@@ -1,12 +1,12 @@
 open Syntax
 
-type ctx_binding
+type 'a ctx_binding
   = Lock of concrete_mod
-  | BVar of var * pure_type
+  | BVar of 'a Bindlib.var * pure_type
   | BType of tvar * kind
 
-type ctx =
-  { gamma : ctx_binding list
+type 'a ctx =
+  { gamma : 'a ctx_binding list
   ; effects : (string * (int * (pure_type, effect_ctx) Bindlib.mbinder)) list
   ; data : (string * (int * (string * (pure_type, pure_type list) Bindlib.mbinder) list)) list
   ; id : (string * var) list
@@ -52,9 +52,10 @@ let rec locks e = function
 
 let rec get_type_context gamma x = match gamma with
   | [] -> failwith "get_type_context: internal error"
-  | BVar (y, a) :: _ when Bindlib.eq_vars x y -> a, []
+  | BVar (y, a) :: gamma when Bindlib.eq_vars x y -> gamma, a, []
   | hd :: tl ->
-    Pair.map_snd (List.cons hd) @@ get_type_context tl x
+    let gamma, a, gamma' = get_type_context tl x in
+    gamma, a, hd :: gamma'
 
 let fresh_tvar ({gamma; tid; _} as ctx) x k =
   let v = Bindlib.new_var (fun v -> TVar v) x in

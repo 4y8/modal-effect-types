@@ -242,7 +242,7 @@ and infer ctx {loc; sexpr} e =
     begin match List.assoc_opt x ctx.id with
       | None -> unknown_var loc x
       | Some v ->
-        let a, gamma' = get_type_context ctx.gamma v in
+        let _, a, gamma' = get_type_context ctx.gamma v in
         let nu, f = locks e gamma' in
         match across ctx a nu f with
         | None -> no_access loc x ctx e
@@ -345,7 +345,7 @@ let check_decl (ctx, prog) d = match d with
       | None -> missing_declaration loc x
       | Some v -> v
     in
-    let a, _ = get_type_context ctx.gamma v in
+    let _, a, _ = get_type_context ctx.gamma v in
     let g, alphas = split_foralls a in
     let ctx' = { ctx with
                  tid = List.map (fun (v, _) -> Bindlib.name_of v, v) alphas

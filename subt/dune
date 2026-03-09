@@ -1,0 +1,3 @@
+(executable
+ (name repl)
+ (libraries core))

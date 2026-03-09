@@ -4,6 +4,8 @@ type 'a ctx_binding
   = Lock of concrete_mod
   | BVar of 'a Bindlib.var * pure_type
   | BType of tvar * kind
+  | BFlex of tvar * kind * pure_type option
+  | Marker of tvar
 
 type 'a ctx =
   { gamma : 'a ctx_binding list
@@ -17,6 +19,7 @@ let (<:) ({gamma; _} as ctx) b =
 
 let rec get_kind gamma x = match gamma with
   | [] -> failwith "get_kind: internal error"
+  | BFlex (y, k, _) :: _
   | BType (y, k) :: _ when Bindlib.eq_vars x y -> k
   | _ :: tl -> get_kind tl x
 
@@ -25,6 +28,7 @@ let rec is_abs ctx = function
   | TMod (MAbs _, _) -> true
   | TMod (MRel _, a) -> is_abs ctx a
   | TArr (_, _) -> false
+  | TFlex v
   | TVar v -> get_kind ctx.gamma v = Abs
   | TForA (k, a) ->
     let v, a = Bindlib.unbind a in is_abs (ctx <: BType (v, k)) a
@@ -80,3 +84,54 @@ let fresh_vars ctx args =
         args (ctx, []) in
     let mvar = Array.of_list vars in
     ctx, mvar
+
+let rec drop_marker v = function
+  | [] -> failwith "drop_marker: internal error"
+  | Marker v' :: tl when Bindlib.eq_vars v v' -> tl
+  | _ :: tl -> drop_marker v tl
+
+let rec drop_type v = function
+  | [] -> failwith "drop_type: internal error"
+  | BType (v', _) :: tl when Bindlib.eq_vars v v' -> tl
+  | _ :: tl -> drop_type v tl
+
+let subst_single a v b =
+  Bindlib.(subst (bind_var v (box_type a) |> unbox) b)
+
+let rec dummy_subst a v = function
+  | [] -> failwith "dummy_marker: internal error"
+  | Marker v' :: _ when Bindlib.eq_vars v v' -> a
+  | BFlex (v', _, None) :: tl ->
+    dummy_subst (subst_single a v' @@ TCon ("unit", [||])) v tl
+  | BFlex (v', _, Some b) :: tl ->
+    dummy_subst (subst_single a v' b) v tl
+  | _ :: tl -> dummy_subst a v tl
+
+let apply gamma a =
+  List.fold_left
+    (fun a b -> match b with
+       | BFlex (v, _, Some b) -> subst_single a v b
+       | _ -> a) a gamma
+
+let rec def_flex alpha a = function
+  | [] -> failwith "internal error: def_flex"
+  | BFlex (beta, k, def) :: tl when Bindlib.eq_vars alpha beta ->
+    if def = None then
+      BFlex (alpha, k, Some a) :: tl
+    else
+      failwith "internal error: redefining flex"
+  | hd :: tl -> hd :: def_flex alpha a tl
+
+let rec split_flex alpha = function
+  | [] -> failwith "internal error: split_flex"
+  | BFlex (beta, k, _) :: gamma' when Bindlib.eq_vars beta alpha ->
+    [], k, gamma'
+  | hd :: tl ->
+    let gamma, k, gamma' = split_flex alpha tl in
+    hd :: gamma, k, gamma'
+
+let rec (<<) alpha alpha' = function
+  | [] -> failwith "internal error: split_flex"
+  | BFlex (beta, _, _) :: _ when Bindlib.eq_vars alpha beta -> true
+  | BFlex (beta, _, _) :: _ when Bindlib.eq_vars alpha' beta -> false
+  | _ :: tl -> (alpha << alpha') tl

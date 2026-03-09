@@ -55,6 +55,8 @@ rule lexer = parse
   | ('"' ([^ '"' '\\']* as s) '"') { STRING s }
   | "&&" { AND }
   | "()" { UNIT }
+  | "<:" { SUBT }
+  | ";;" { SSCOL }
   | _ as c { error lexbuf (Printf.sprintf "Unknown character : %c" c) }
 {
   let lexer x =

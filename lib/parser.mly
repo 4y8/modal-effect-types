@@ -38,7 +38,7 @@ let spair (a, b) = SCons ("Pair", [a; b])
 %token <int> INT
 %token HANDLE DO WITH RETURN EFFECT FUN TYPE IF THEN ELSE FORALL MATCH MASK LET
 %token IN END VAL OF
-%token PLUS MINUS TIMES AND CARET
+%token PLUS MINUS TIMES AND CARET SUBT SSCOL
 %token LANGLE RANGLE LSQUARE RSQUARE LCURLY RCURLY LPAR RPAR
 %token COMMA PIPE ARROW DARROW DOT DCOL EQU WILDCARD AT SCOL
 %token UNIT
@@ -51,6 +51,8 @@ let spair (a, b) = SCons ("Pair", [a; b])
 %left TIMES
 
 %type <((string * surface_decl) * loc) list> file
+%type <surface_type * surface_type> subtype
+%start subtype
 %start file
 
 %%
@@ -225,3 +227,6 @@ let decl :=
   | d = decl_adt; { d, Some ($startpos, $endpos) }
 
 file: d = decl* EOF { d };
+
+let subtype :=
+  | t1 = stype; SUBT; t2 = stype; SSCOL; <>

@@ -79,11 +79,14 @@ and pure_type
   | TVar of tvar
   (* use arrays to use Bindlib's mbinders *)
   | TCon of string * pure_type array
+  | TFlex of tvar
   | TForA of kind * (pure_type, pure_type) Bindlib.binder
 
 and tvar = pure_type Bindlib.var
 
 let tvar_ = Bindlib.box_var
+
+let tflex_ = Bindlib.box_var
 
 let tmod_ = Bindlib.box_apply2 (fun m a -> TMod (m, a))
 
@@ -104,6 +107,7 @@ let rec box_type = function
   | TArr (a, b) -> tarr_ (box_type a) (box_type b)
   | TCon (c, l) -> tcon_ c (Array.map box_type l)
   | TForA (k, a) -> tfora_ k (Bindlib.box_binder box_type a)
+  | TFlex v -> tflex_ v
 
 and box_effect_ctx e =
   let pure_effect_ eff_name = Bindlib.box_apply2

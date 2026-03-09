@@ -374,26 +374,27 @@ let check_decl (ctx, prog) d = match d with
            c, Bindlib.(bind_mvar mvar l |> unbox)) l in
     { ctx with data = (x, (n, l)) :: ctx.data }, prog
 
-let check_prog =
+let init_ctx, _ =
+
   let int = TCon ("int", [||]) in
   let bool = TCon ("bool", [||]) in
   let string = TCon ("string", [||]) in
   let unit = TCon ("unit", [||]) in
   let (@->) t t' = TArr (t, t') in
   let v = Bindlib.new_var (fun v -> TVar v) "fail" in
-  let init_ctx, _ =
-    fresh_vars
-      { gamma = [] ; tid = [] ; id = [] ; effects = []
-      ; data = ["int", (0, []); "string", (0, [])] }
-      [("+", TMod (MAbs [], int @-> int @-> int));
-       ("*", TMod (MAbs [], int @-> int @-> int));
-       ("-", TMod (MAbs [], int @-> int @-> int));
-       ("=", TMod (MAbs [], int @-> int @-> bool));
-       ("string_eq", TMod (MAbs [], string @-> string @-> bool));
-       ("^", TMod (MAbs [], string @-> string @-> string));
-       ("&&", TMod (MAbs [], bool @-> bool @-> bool));
-       ("fail", TMod (MAbs [],
-                      TForA (Any, Bindlib.(unit @-> (TVar v) |> box_type |> bind_var v |> unbox))));
-       ("print", TMod (MAbs [], string @-> unit))]
-  in
+  fresh_vars
+    { gamma = [] ; tid = [] ; id = [] ; effects = []
+    ; data = ["int", (0, []); "string", (0, [])] }
+    [("+", TMod (MAbs [], int @-> int @-> int));
+     ("*", TMod (MAbs [], int @-> int @-> int));
+     ("-", TMod (MAbs [], int @-> int @-> int));
+     ("=", TMod (MAbs [], int @-> int @-> bool));
+     ("string_eq", TMod (MAbs [], string @-> string @-> bool));
+     ("^", TMod (MAbs [], string @-> string @-> string));
+     ("&&", TMod (MAbs [], bool @-> bool @-> bool));
+     ("fail", TMod (MAbs [],
+                    TForA (Any, Bindlib.(unit @-> (TVar v) |> box_type |> bind_var v |> unbox))));
+     ("print", TMod (MAbs [], string @-> unit))]
+
+let check_prog =
   Fun.compose snd (List.fold_left check_decl (init_ctx, []))

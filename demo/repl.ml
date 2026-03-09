@@ -24,7 +24,7 @@ let repl_from_file f =
         _ ->
           Core.Error.error_str_lexbuf lb
             (Printf.sprintf "Unexpected token: \"%s\"" (Lexing.lexeme lb)) in
-    
+
     begin
       try print_endline (Core.Eval.show_value (infer p))
       with

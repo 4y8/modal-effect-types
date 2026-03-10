@@ -41,7 +41,6 @@ rule lexer = parse
   | '}' { RCURLY }
   | '(' { LPAR }
   | ')' { RPAR }
-  | '@' { AT }
   | ',' { COMMA }
   | '|' { PIPE }
   | "->" { ARROW }
@@ -50,7 +49,6 @@ rule lexer = parse
   | ':' { DCOL }
   | ';' { SCOL }
   | '=' { EQU }
-  | '@' { AT }
   | '^' { CARET }
   | ('"' ([^ '"' '\\']* as s) '"') { STRING s }
   | "&&" { AND }

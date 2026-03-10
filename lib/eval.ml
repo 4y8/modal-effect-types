@@ -57,7 +57,6 @@ let rec eval ctx env {sexpr; _} = match sexpr with
       | VClo f -> f (eval ctx env n)
       | _ -> failwith "internal error"
     end
-  | SAppT (m, _)
   | SAnn (m, _) -> eval ctx env m
   | SSeq (m, n) -> let _ = eval ctx env m in eval ctx env n
   | SDo (e, m) -> perform (Do (e, eval ctx env m))

@@ -40,7 +40,7 @@ let spair (a, b) = SCons ("Pair", [a; b])
 %token IN END VAL OF
 %token PLUS MINUS TIMES AND CARET SUBT SSCOL
 %token LANGLE RANGLE LSQUARE RSQUARE LCURLY RCURLY LPAR RPAR
-%token COMMA PIPE ARROW DARROW DOT DCOL EQU WILDCARD AT SCOL
+%token COMMA PIPE ARROW DARROW DOT DCOL EQU WILDCARD SCOL
 %token UNIT
 
 %left AND
@@ -51,7 +51,7 @@ let spair (a, b) = SCons ("Pair", [a; b])
 %left TIMES
 
 %type <((string * surface_decl) * loc) list> file
-%type <surface_type * surface_type> subtype
+%type <(surface_type * surface_type, (string * surface_decl) * loc) Either.t> subtype
 %start subtype
 %start file
 
@@ -152,8 +152,7 @@ let app_expr :=
   | loc_expr(
     | ~ = MIDENT; LPAR; ~ = separated_list(COMMA, sexpr); RPAR; <SCons>
     | ~ = app_expr; ~ = atom_expr; <SApp>
-    | ~ = app_expr; ~ = single_cons; <SApp>
-    | ~ = app_expr; AT; ~ = atom_type; <SAppT>)
+    | ~ = app_expr; ~ = single_cons; <SApp>)
 
 let op ==
   | loc_expr( | EQU; { SVar "=" }
@@ -229,4 +228,5 @@ let decl :=
 file: d = decl* EOF { d };
 
 let subtype :=
-  | t1 = stype; SUBT; t2 = stype; SSCOL; <>
+  | t1 = stype; SUBT; t2 = stype; SSCOL; { Either.Left (t1, t2) }
+  | ~ = decl; SSCOL; <Either.Right>

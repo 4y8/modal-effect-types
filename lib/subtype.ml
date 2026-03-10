@@ -165,7 +165,7 @@ let rec check_ a b gamma = match a, b with
 
   | a, b ->
     let mu, g = Context.get_guarded a in
-    let nu, g' = Context.get_guarded a in
+    let nu, g' = Context.get_guarded b in
     if a != g && b != g' && Effects.eq_mod mu nu then
       let x = fresh_var "x" in
       let x' = fresh_var "x" in

@@ -1,14 +1,14 @@
 open Syntax
 
-type 'a ctx_binding
-  = Lock of concrete_mod
-  | BVar of 'a Bindlib.var * pure_type
-  | BType of tvar * kind
-  | BFlex of tvar * kind * pure_type option
-  | Marker of tvar
+type ctx_binding
+  = Lock : concrete_mod -> ctx_binding
+  | BVar : 'a Bindlib.var * pure_type -> ctx_binding
+  | BType : tvar * kind -> ctx_binding
+  | BFlex : tvar * kind * pure_type option -> ctx_binding
+  | Marker : tvar -> ctx_binding
 
-type 'a ctx =
-  { gamma : 'a ctx_binding list
+type ctx =
+  { gamma : ctx_binding list
   ; effects : (string * (int * (pure_type, effect_ctx) Bindlib.mbinder)) list
   ; data : (string * (int * (string * (pure_type, pure_type list) Bindlib.mbinder) list)) list
   ; id : (string * var) list
@@ -16,74 +16,6 @@ type 'a ctx =
 
 let (<:) ({gamma; _} as ctx) b =
   {ctx with gamma = b :: gamma}
-
-let rec get_kind gamma x = match gamma with
-  | [] -> failwith "get_kind: internal error"
-  | BFlex (y, k, _) :: _
-  | BType (y, k) :: _ when Bindlib.eq_vars x y -> k
-  | _ :: tl -> get_kind tl x
-
-(* Section 4.4 *)
-let rec is_abs ctx = function
-  | TMod (MAbs _, _) -> true
-  | TMod (MRel _, a) -> is_abs ctx a
-  | TArr (_, _) -> false
-  | TFlex v
-  | TVar v -> get_kind ctx.gamma v = Abs
-  | TForA (k, a) ->
-    let v, a = Bindlib.unbind a in is_abs (ctx <: BType (v, k)) a
-  | TCon (_, l) -> Array.for_all (is_abs ctx) l
-
-let rec get_guarded = function
-  | TMod (mu, t) -> let nu, g = get_guarded t in
-    Effects.compose mu nu, g
-  | g -> Effects.id, g
-
-let across ctx a nu f =
-  if is_abs ctx a then Some a
-  else
-    let mu, g = get_guarded a in
-    match Effects.right_residual nu mu f with
-    | Some xi -> Some (TMod (xi, g))
-    | _ -> None
-
-let rec locks e = function
-  | [] -> Effects.id, e
-  | Lock (m, e) :: tl ->
-    let (m', f) = locks e tl in
-    Effects.compose m' m, f
-  | _ :: tl -> locks e tl
-
-let rec get_type_context gamma x = match gamma with
-  | [] -> failwith "get_type_context: internal error"
-  | BVar (y, a) :: gamma when Bindlib.eq_vars x y -> gamma, a, []
-  | hd :: tl ->
-    let gamma, a, gamma' = get_type_context tl x in
-    gamma, a, hd :: gamma'
-
-let fresh_tvar ({gamma; tid; _} as ctx) x k =
-  let v = Bindlib.new_var (fun v -> TVar v) x in
-  { ctx with gamma = BType (v, k) :: gamma; tid = (x, v) :: tid }, v
-
-let fresh_tvars ctx args =
-    let ctx, vars =
-      List.fold_right (fun (x, k) (ctx, vars) ->
-          Pair.map_snd (fun v -> v :: vars) @@ fresh_tvar ctx x k)
-        args (ctx, []) in
-    let mvar = Array.of_list vars in
-    ctx, mvar
-
-let fresh_var ({gamma; id; _} as ctx) x a =
-  let v = Bindlib.new_var (fun v -> Var v) x in
-  { ctx with gamma = BVar (v, a) :: gamma; id = (x, v) :: id }, v
-
-let fresh_vars ctx args =
-    let ctx, vars =
-      List.fold_right (fun (x, t) (ctx, vars) ->
-          Pair.map_snd (fun v -> v :: vars) @@ fresh_var ctx x t)
-        args (ctx, []) in
-    let mvar = Array.of_list vars in
-    ctx, mvar
 
 let rec drop_marker v = function
   | [] -> failwith "drop_marker: internal error"
@@ -94,6 +26,165 @@ let rec drop_type v = function
   | [] -> failwith "drop_type: internal error"
   | BType (v', _) :: tl when Bindlib.eq_vars v v' -> tl
   | _ :: tl -> drop_type v tl
+
+let bind f g = fun ctx ->
+  let a, ctx = f ctx in
+  g a ctx
+
+let (let*) = bind
+
+let (>>) f g =
+  let* () = f in
+  g
+
+let return x = fun ctx -> x, ctx
+
+let ($>) x f =
+  let* x = x in
+  return (f x)
+
+module M = struct
+  module List = struct
+    let rec map f = function
+      | [] -> return []
+      | hd :: tl ->
+        let* x = f hd in
+        let* xs = map f tl in
+        return (x :: xs)
+
+
+    let rec map2 f l l' = match l, l' with
+      | [], [] -> return []
+      | hd :: tl, hd' :: tl' ->
+        let* x = f hd hd' in
+        let* xs = map2 f tl tl' in
+        return (x :: xs)
+      | _, _ -> failwith "internal error: map2"
+
+    let rec iter f = function
+      | [] -> return ()
+      | hd :: tl -> f hd >> iter f tl
+
+    let rec fold_right f l acc = match l with
+      | [] -> return acc
+      | hd :: tl -> let* tl = fold_right f tl acc in
+        f hd tl
+
+    let rec fold_left f acc l = match l with
+      | [] -> return acc
+      | hd :: tl ->
+        let* acc = f acc hd in
+        fold_left f acc tl
+  end
+
+  module Array = struct
+    let for_all f a =
+      let n = Array.length a in
+      let rec aux i =
+        if i = n then return true
+        else
+          let* c =  f a.(i) in
+          if c then aux (i + 1)
+          else return false
+      in aux 0
+  end
+end
+
+let add_binding b = fun ctx ->
+  (), ctx <: b
+
+let fresh_marker () =
+  let x = Bindlib.new_var (fun v -> TFlex v) "" in
+   x
+
+let protect_context f = fun ctx ->
+  let x = fresh_marker () in
+  let ctx = ctx <: Marker x in
+  let a, ctx = f ctx in
+  a, { ctx with gamma = drop_marker x ctx.gamma }
+
+let with_binding b f =
+  protect_context @@ (add_binding b >> f)
+
+let get_kind x ({gamma; _} as ctx) =
+  let rec get_kind gamma x = match gamma with
+    | [] -> failwith "get_kind: internal error"
+    | BFlex (y, k, _) :: _
+    | BType (y, k) :: _ when Bindlib.eq_vars x y -> k
+    | _ :: tl -> get_kind tl x
+  in
+  get_kind gamma x, ctx
+
+(* Section 4.4 *)
+let rec is_abs = function
+  | TMod (MAbs _, _) -> return true
+  | TMod (MRel _, a) -> is_abs a
+  | TArr (_, _) -> return false
+  | TFlex v
+  | TVar v ->
+    let* k = get_kind v in
+    return (k = Abs)
+  | TForA (k, a) ->
+    let v, a = Bindlib.unbind a in
+    protect_context @@
+    add_binding (BType (v, k)) >>
+    is_abs a
+  | TCon (_, l) -> M.Array.for_all is_abs l
+
+let rec get_guarded = function
+  | TMod (mu, t) -> let nu, g = get_guarded t in
+    Effects.compose mu nu, g
+  | g -> Effects.id, g
+
+let across a nu f =
+  let* c = is_abs a in
+  if c then return (Some a)
+  else
+    let mu, g = get_guarded a in
+    match Effects.right_residual nu mu f with
+    | Some xi -> return @@ Some (TMod (xi, g))
+    | _ -> return None
+
+let rec locks e = function
+  | [] -> Effects.id, e
+  | Lock (m, e) :: tl ->
+    let (m', f) = locks e tl in
+    Effects.compose m' m, f
+  | _ :: tl -> locks e tl
+
+
+let get_type_context x ({gamma; _} as ctx) =
+  let rec get_type_context gamma x = match gamma with
+    | [] -> failwith "get_type_context: internal error"
+    | BVar (y, a) :: gamma when Bindlib.eq_vars x y -> gamma, a, []
+    | hd :: tl ->
+      let gamma, a, gamma' = get_type_context tl x in
+      gamma, a, hd :: gamma'
+  in get_type_context gamma x, ctx
+
+let fresh_tvar x k ({gamma; tid; _} as ctx) =
+  let v = Bindlib.new_var (fun v -> TVar v) x in
+  v, { ctx with gamma = BType (v, k) :: gamma; tid = (x, v) :: tid }
+
+let fresh_tvars args ctx =
+    let vars, ctx =
+      List.fold_right (fun (x, k) (vars, ctx) ->
+          Pair.map_fst (fun v -> v :: vars) @@ fresh_tvar x k ctx)
+        args ([], ctx) in
+    let mvar = Array.of_list vars in
+    mvar, ctx
+
+let fresh_var x a ({gamma; id; _} as ctx) =
+  let v = Bindlib.new_var (fun v -> Var v) x in
+  v, { ctx with gamma = BVar (v, a) :: gamma; id = (x, v) :: id }
+
+let fresh_vars args ctx =
+    let vars, ctx =
+      List.fold_right (fun (x, t) (vars, ctx) ->
+          Pair.map_fst (fun v -> v :: vars) @@ fresh_var x t ctx)
+        args ([], ctx) in
+    let mvar = Array.of_list vars in
+    mvar, ctx
 
 let subst_single a v b =
   Bindlib.(subst (bind_var v (box_type a) |> unbox) b)
@@ -135,3 +226,18 @@ let rec (<<) alpha alpha' = function
   | BFlex (beta, _, _) :: _ when Bindlib.eq_vars alpha beta -> true
   | BFlex (beta, _, _) :: _ when Bindlib.eq_vars alpha' beta -> false
   | _ :: tl -> (alpha << alpha') tl
+
+let lookup_data c ctx =
+  List.assoc_opt c ctx.data, ctx
+
+let get_data c ctx =
+  List.assoc c ctx.data, ctx
+
+let lookup_tid x ctx =
+  List.assoc_opt x ctx.tid, ctx
+
+let lookup_id x ctx =
+  List.assoc_opt x ctx.id, ctx
+
+let lookup_eff e ctx =
+  List.assoc_opt e ctx.effects, ctx

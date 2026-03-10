@@ -39,7 +39,6 @@ type surface_desc
   | SAnn of surface_expr * surface_type
   | SSeq of surface_expr * surface_expr
   | SLet of string * surface_expr * surface_expr
-  | SAppT of surface_expr * surface_type
   | SMask of surface_expr * (string * loc) list
   | SHand of surface_expr * surface_effect list * surface_handler
   | SCons of string * surface_expr list

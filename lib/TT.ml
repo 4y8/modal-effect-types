@@ -110,10 +110,10 @@ let check_mod mu = function
 let rec check ctx m s e = match m, s with
   (* T-Var *)
   | Var v, Hole ->
-    let _, a, gamma' = get_type_context ctx.gamma v in
+    let (_, a, gamma'), ctx = get_type_context v ctx in
     let mu, a = split_var a in
     let nu, f = locks e gamma' in
-    if not (Effects.sub_mod mu nu f) && not (is_abs ctx a) then
+    if not (Effects.sub_mod mu nu f) && not (fst @@ is_abs a ctx) then
       Type.no_access None (Bindlib.name_of v) ctx e;
     a
 
@@ -152,7 +152,7 @@ let rec check ctx m s e = match m, s with
   | TApp (m, b), Hole ->
     let a = check ctx m Hole e in
     let k, a = Type.split_forall None a in
-    if k = Abs && not (is_abs ctx b) then
+    if k = Abs && not (fst @@ is_abs b ctx) then
       Type.kind_mismatch None b Syntax.Abs Syntax.Any;
     Bindlib.subst a b
 

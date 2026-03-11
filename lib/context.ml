@@ -98,10 +98,12 @@ let fresh_marker () =
    x
 
 let protect_context f = fun ctx ->
+  let id = ctx.id in
+  let tid = ctx.tid in
   let x = fresh_marker () in
   let ctx = ctx <: Marker x in
   let a, ctx = f ctx in
-  a, { ctx with gamma = drop_marker x ctx.gamma }
+  a, { ctx with gamma = drop_marker x ctx.gamma; id; tid }
 
 let with_binding b f =
   protect_context @@ (add_binding b >> f)
@@ -126,8 +128,7 @@ let rec is_abs = function
     return (k = Abs)
   | TForA (k, a) ->
     let v, a = Bindlib.unbind a in
-    protect_context @@
-    add_binding (BType (v, k)) >>
+    with_binding (BType (v, k)) @@
     is_abs a
   | TCon (_, l) -> M.Array.for_all is_abs l
 

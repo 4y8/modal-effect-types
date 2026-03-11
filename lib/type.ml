@@ -16,7 +16,7 @@ let rec check_type t = match t.stype with
     protect_context @@
     let* v = fresh_tvar x k in
     let* a = check_type a in
-    return @@ TForA (k, Bindlib.(unbox (bind_var v (box_type a))))
+    return (TForA (k, Bindlib.(unbox (bind_var v (box_type a)))))
   | STCons (c, l) ->
     let* ty = lookup_data c in
     begin match ty with

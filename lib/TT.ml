@@ -114,20 +114,20 @@ let rec check ctx m s e = match m, s with
     let mu, a = split_var a in
     let nu, f = locks e gamma' in
     if not (Effects.sub_mod mu nu f) && not (fst @@ is_abs a ctx) then
-      Type.no_access None (Bindlib.name_of v) ctx e;
+      Errors.no_access None (Bindlib.name_of v) ctx e;
     a
 
   (* T-Mod *)
   | Mod (mu, v), s ->
     if not (is_val v) then
-      Type.expected_val None v;
+      Errors.expected_val None v;
     check (ctx <: Lock (mu, e)) m (shape_map (check_mod mu) s)
       (Effects.apply_mod mu e)
 
   (* T-Letmod *)
   | LetMod (mu, nu, v, m), s ->
     if not (is_val v) then
-      Type.expected_val None v;
+      Errors.expected_val None v;
     let a = check_mod mu (check (ctx <: Lock (nu, e)) v Hole
                             (Effects.apply_mod nu e)) in
     let x, m = Bindlib.unbind m in
@@ -135,7 +135,7 @@ let rec check ctx m s e = match m, s with
 
   (* T-App *)
   | App (m, n), Hole ->
-    let a, b = Type.split_arr None (check ctx m Hole e) in
+    let a, b = Utils.split_arr None (check ctx m Hole e) in
     let _ = check ctx n (Check a) e in
     b
 
@@ -151,16 +151,49 @@ let rec check ctx m s e = match m, s with
   (* T-TApp *)
   | TApp (m, b), Hole ->
     let a = check ctx m Hole e in
-    let k, a = Type.split_forall None a in
+    let k, a = Utils.split_forall None a in
     if k = Abs && not (fst @@ is_abs b ctx) then
-      Type.kind_mismatch None b Syntax.Abs Syntax.Any;
+      Errors.kind_mismatch None b Syntax.Abs Syntax.Any;
     Bindlib.subst a b
 
   (* Switch *)
   | _, Check a ->
     let a' = check ctx m Hole e in
     if not Effects.(eq_ty a' a) then
-      Type.type_mismatch None a' a;
+      Errors.type_mismatch None a' a;
     a
 
   | _, _ -> failwith "todo"
+
+module Pprint = struct
+open Pprint
+open Format
+let rec expr_let ctx fmt = function
+  | LetMod (mu, nu, m, n) ->
+    let v, n, ctx' = Bindlib.unbind_in ctx n in
+    fprintf fmt "let%a mod%a %s =@ @[<2>%a@] in@ %a"
+      (modality ctx) mu (modality ctx) nu (Bindlib.name_of v) (expr_let ctx) m
+      (expr_let ctx') n
+  | Mod (mu, m) ->
+    fprintf fmt "mod%a@[<2>@ %a@]" (modality ctx) mu (expr_atom ctx) m
+  | Lam (a, m) ->
+    let v, m, ctx' = Bindlib.unbind_in ctx m in
+    fprintf fmt "@[<2>λ%s : %a .@ %a@]" (Bindlib.name_of v) (ty_arrow ctx) a
+      (expr_let ctx') m
+  | TLam (k, m) ->
+    let v, m, ctx = Bindlib.unbind_in ctx m in
+    fprintf fmt "@[<2>Λ%s : %a.@ %a@]" (Bindlib.name_of v) kind k
+      (expr_let ctx) m
+  | m -> expr_app ctx fmt m
+and expr_app ctx fmt = function
+  | TApp (m, a) ->
+    fprintf fmt "@[<2>%a@ %a@]" (expr_app ctx) m (ty_atom ctx) a
+  | App (m, n) ->
+    fprintf fmt "@[<2>%a@ %a@]" (expr_app ctx) m (expr_atom ctx) n
+  | m -> expr_atom ctx fmt m
+and expr_atom ctx fmt = function
+  | Var v -> fprintf fmt "%s" (Bindlib.name_of v)
+  | m -> fprintf fmt "(@[%a@])" (expr_let ctx) m
+
+let expr fmt m = expr_let (Bindlib.free_vars (box_expr m)) fmt m
+end

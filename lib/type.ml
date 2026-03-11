@@ -1,53 +1,7 @@
 open Syntax
+open Errors
+open Utils
 open Context
-
-let unknown_var loc x = Error.error_str loc ("Unknown variable " ^ x)
-let unknown_eff loc x = Error.error_str loc ("Unknown effect " ^ x)
-let unknown_cons loc c t = Error.error loc (fun fmt -> Format.fprintf fmt
-        "Unknown constructor %s of type %s" c t)
-
-let type_mismatch loc _ _ =
-  Error.error_str loc "Type mismatch todo"
-
-let expected_arr loc _ = Error.error_str loc "Expected function type todo"
-let expected_prod loc _ = Error.error_str loc "Expected product type todo"
-let expected_cons loc _ =
-  Error.error_str loc "Expected algebraic data type todo"
-let expected_forall loc _ =
-  Error.error_str loc "Expected forall type for type application todo"
-let expected_val loc _ = Error.error_str loc "Expected a value todo"
-
-let mod_mismatch loc _ _ _ = Error.error_str loc "Modality mismatch todo"
-
-let kind_mismatch loc _ _ _ = Error.error_str loc "Kind mismatch todo"
-
-let no_access loc _ _ _ = Error.error_str loc "Cannot access variable todo"
-
-let no_unboxing loc _ _ =
-  Error.error_str loc "Cannot unbox function in application todo"
-
-let missing_declaration loc x =
-  Error.error_str loc ("Missing declaration for function " ^ x)
-
-let not_cons loc c _ = Error.error loc
-    (fun fmt -> Format.fprintf fmt
-        "Constructor %s is not of the good type" c)
-
-let nb_arg_mismatch loc e n l = Error.error loc
-    (fun fmt -> Format.fprintf fmt
-        "Wrong number of arguments for %s, expected %d, got %d"
-        e n (List.length l))
-
-let rec is_val = function
-  | SVar _ -> true
-  | SLam (_, _) -> true
-  | SAnn (m, _) -> is_val m.sexpr
-  | SCons (_, l) -> List.for_all (fun {sexpr; _} -> is_val sexpr) l
-  | _ -> false
-
-let is_mod = function TMod _ -> true | _ -> false
-
-let is_forall = function TForA _ -> true | _ -> false
 
 let rec check_type t = match t.stype with
   | STMod (mu, a) ->
@@ -124,27 +78,6 @@ and check_mask = function
       let* tl = check_mask tl in
       return @@ (List.map (fun {eff_name; _} -> eff_name) l) @ tl
 
-let split_arr loc = function
-  | TArr (a, b) -> a, b
-  | a ->
-    expected_arr loc a
-
-let split_forall loc = function
-  | TForA (k, a) -> k, a
-  | a -> expected_forall loc a
-
-let split_foralls a =
-  let rec aux l = function
-    | TForA (k, b) ->
-      let v, a = Bindlib.unbind b in
-      aux ((v, k) :: l) a
-    | a -> a, l
-  in Pair.map_snd List.rev @@ aux [] a
-
-let split_cons loc = function
-  | TCon (c, l) -> c, l
-  | a -> expected_cons loc a
-
 let rec split_pat vars mu t { spat; ploc } =
   let nu, g = get_guarded t in
   let mu = Effects.compose mu nu in
@@ -178,6 +111,18 @@ let join_type loc f t t' =
   else match Effects.join_mod mu nu f with
     | None -> return @@ mod_mismatch loc mu nu g
     | Some lam -> return @@ TMod (lam, g)
+
+let check_subtype loc a b ctx =
+  let _, delta =
+    try
+      Subtype.check a b ctx.gamma
+    with Subtype.Mismatch (a, b) -> type_mismatch loc a b
+  in
+  (), { ctx with gamma = delta }
+
+let articulate alpha ctx =
+  let alpha1, alpha2, gamma = Subtype.articulate alpha ctx.gamma in
+  (alpha1, alpha2), { ctx with gamma }
 
 let rec check ({loc; sexpr} as m) a e =
   match sexpr with
@@ -246,12 +191,13 @@ let rec check ({loc; sexpr} as m) a e =
     let* n = check n a e in
     return @@ Let (m, TCon ("unit", [||]),
                    Bindlib.(box_expr n |> bind_var dummy |> unbox))
-  | SCons (c, l) ->
+
+  | SCons (c, l) when is_con a ->
     let tc, tl = split_cons loc a in
     let* _, constructors = get_data tc in
     begin
       match List.assoc_opt c constructors with
-      | None -> unknown_cons loc c tc
+      | None -> unknown_cons loc c (Some tc)
       | Some cargs ->
         let cargs = Bindlib.msubst cargs tl in
         if List.length cargs <> List.length l then
@@ -270,13 +216,12 @@ let rec check ({loc; sexpr} as m) a e =
     let* m, b = infer m e in
     let mu, g = get_guarded b in
     let nu, g' = get_guarded a in
-    if not Effects.(eq_ty g g') then type_mismatch loc g g'
+    check_subtype loc g g' >>
+    let* c = is_abs g in
+    if not (Effects.sub_mod mu nu e) && not c then
+      mod_mismatch loc mu nu g
     else
-      let* c = is_abs g in
-      if not (Effects.sub_mod mu nu e) && not c then
-        mod_mismatch loc mu nu g
-      else
-        return m
+      return m
 
 and infer {loc; sexpr} e =
   match sexpr with
@@ -293,6 +238,7 @@ and infer {loc; sexpr} e =
         | None -> fun ctx -> no_access loc x ctx e
         | Some a -> return (Var v, a)
     end
+
   (* B-Annotation *)
   | SAnn (m, a) ->
     let* a = check_type a in
@@ -302,11 +248,7 @@ and infer {loc; sexpr} e =
   (* B-App *)
   | SApp (m, n) ->
     let* m, a = infer m e in
-    let mu, g = get_guarded a in
-    let a, b = split_arr loc g in
-    if not Effects.(sub_mod mu id e) then
-      no_unboxing loc mu e;
-    let* n = check n a e in
+    let* n, b = infer_app loc a n e in
     return (App (m, n), b)
 
   (* B-Do *)
@@ -362,16 +304,54 @@ and infer {loc; sexpr} e =
     let dummy = Bindlib.new_var (fun v -> Var v) "unit" in
     let* n, a = infer n e in
     return (Let (m, TCon ("unit", [||]),
-                 Bindlib.(n |> box_expr |> bind_var dummy |> unbox)), a)
+                 Bindlib.(box_expr n |> bind_var dummy |> unbox)), a)
   | SLet (x, m, n) ->
     let* m, a = infer m e in
     let* n, b, v = protect_context @@
       let* v = fresh_var x a in
       let* n, b = infer n e in
       return (n, b, v) in
-    return (Let (m, a, Bindlib.(n |> box_expr |> bind_var v |> unbox)), b)
+    return (Let (m, a, Bindlib.(box_expr n |> bind_var v |> unbox)), b)
+
+  | SCons (c, l) ->
+    let* tc = lookup_con c in
+    begin match tc with
+      | None -> unknown_cons loc c None
+      | Some (tc, n, a) ->
+        let* targs = fresh_flexs (List.init n (fun _ -> ("", Any))) $>
+                     Array.map (fun v -> TFlex v) in
+        let a = Bindlib.msubst a targs in
+        let* l = M.List.map2 (fun m a -> check m a e) l a in
+        return (Con (c, l), TCon (tc, [||]))
+    end
   | _ ->
     failwith "todo"
+
+and infer_app loc a n e = match a with
+  (* App-Fun *)
+  | TArr (a, c) ->
+    let* n = check n a e in
+    return (n, c)
+
+  (* App-ExVar *)
+  | TFlex alpha ->
+    let* alpha1, alpha2 = articulate alpha in
+    let* n = check n (TFlex alpha1) e in
+    return (n, TFlex alpha2)
+
+  (* App-All *)
+  | TForA (k, a) ->
+    let* alpha = fresh_flex "alpha" k in
+    infer_app loc (Bindlib.subst a (TFlex alpha)) n e
+
+  (* App-Mod *)
+  | a ->
+    let mu, g = get_guarded a in
+    if g == a then
+      no_apply_type loc a;
+    if not Effects.(sub_mod mu id e) then
+      no_unboxing loc mu e;
+    infer_app loc g n e
 
 let check_decl (prog, ctx) d = match d with
   | (x, SDSig t), _ ->

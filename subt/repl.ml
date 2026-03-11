@@ -19,7 +19,7 @@ let _ =
         loop ctx
       | Either.Left (a, b) ->
         let a, b = Type.(fst @@ check_type a ctx, fst @@ check_type b ctx) in
-        let m = Subtype.check a b ctx.gamma in
+        let m, _ = Subtype.check a b ctx.gamma in
         Format.printf "%a@." Pprint.expr m;
         loop ctx
     with

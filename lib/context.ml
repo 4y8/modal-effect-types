@@ -167,24 +167,36 @@ let fresh_tvar x k ({gamma; tid; _} as ctx) =
   v, { ctx with gamma = BType (v, k) :: gamma; tid = (x, v) :: tid }
 
 let fresh_tvars args ctx =
-    let vars, ctx =
-      List.fold_right (fun (x, k) (vars, ctx) ->
-          Pair.map_fst (fun v -> v :: vars) @@ fresh_tvar x k ctx)
-        args ([], ctx) in
-    let mvar = Array.of_list vars in
-    mvar, ctx
+  let vars, ctx =
+    List.fold_right (fun (x, k) (vars, ctx) ->
+        Pair.map_fst (fun v -> v :: vars) @@ fresh_tvar x k ctx)
+      args ([], ctx) in
+  let mvar = Array.of_list vars in
+  mvar, ctx
+
+let fresh_flex x k ({gamma; tid; _} as ctx) =
+  let v = Bindlib.new_var (fun v -> TFlex v) x in
+  v, { ctx with gamma = BFlex (v, k, None) :: gamma; tid = (x, v) :: tid }
+
+let fresh_flexs args ctx =
+  let vars, ctx =
+    List.fold_right (fun (x, k) (vars, ctx) ->
+        Pair.map_fst (fun v -> v :: vars) @@ fresh_flex x k ctx)
+      args ([], ctx) in
+  let mvar = Array.of_list vars in
+  mvar, ctx
 
 let fresh_var x a ({gamma; id; _} as ctx) =
   let v = Bindlib.new_var (fun v -> Var v) x in
   v, { ctx with gamma = BVar (v, a) :: gamma; id = (x, v) :: id }
 
 let fresh_vars args ctx =
-    let vars, ctx =
-      List.fold_right (fun (x, t) (vars, ctx) ->
-          Pair.map_fst (fun v -> v :: vars) @@ fresh_var x t ctx)
-        args ([], ctx) in
-    let mvar = Array.of_list vars in
-    mvar, ctx
+  let vars, ctx =
+    List.fold_right (fun (x, t) (vars, ctx) ->
+        Pair.map_fst (fun v -> v :: vars) @@ fresh_var x t ctx)
+      args ([], ctx) in
+  let mvar = Array.of_list vars in
+  mvar, ctx
 
 let subst_single a v b =
   Bindlib.(subst (bind_var v (box_type a) |> unbox) b)
@@ -229,6 +241,16 @@ let rec (<<) alpha alpha' = function
 
 let lookup_data c ctx =
   List.assoc_opt c ctx.data, ctx
+
+let lookup_con c ctx =
+  List.find_map (fun (tc, (n, l)) ->
+      List.find_map (fun (c', b) ->
+      let v, a = Bindlib.unmbind b in
+      if c' = c then
+        Some (tc, n, Bindlib.(bind_mvar v (box_list (List.map box_type a))
+                              |> unbox))
+      else None) l
+    ) ctx.data, ctx
 
 let get_data c ctx =
   List.assoc c ctx.data, ctx

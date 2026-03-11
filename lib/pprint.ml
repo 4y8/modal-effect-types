@@ -1,5 +1,4 @@
 open Syntax
-open TT
 open Format
 
 let kind fmt = function
@@ -43,32 +42,3 @@ and modality ctx fmt = function
       l (eff_ctx ctx) r
 
 let ty fmt a = ty_fora (Bindlib.free_vars (box_type a)) fmt a
-
-let rec expr_let ctx fmt = function
-  | LetMod (mu, nu, m, n) ->
-    let v, n, ctx' = Bindlib.unbind_in ctx n in
-    fprintf fmt "let%a mod%a %s =@ @[<2>%a@] in@ %a"
-      (modality ctx) mu (modality ctx) nu (Bindlib.name_of v) (expr_let ctx) m
-      (expr_let ctx') n
-  | Mod (mu, m) ->
-    fprintf fmt "mod%a@[<2>@ %a@]" (modality ctx) mu (expr_atom ctx) m
-  | Lam (a, m) ->
-    let v, m, ctx' = Bindlib.unbind_in ctx m in
-    fprintf fmt "@[<2>λ%s : %a .@ %a@]" (Bindlib.name_of v) (ty_arrow ctx) a
-      (expr_let ctx') m
-  | TLam (k, m) ->
-    let v, m, ctx = Bindlib.unbind_in ctx m in
-    fprintf fmt "@[<2>Λ%s : %a.@ %a@]" (Bindlib.name_of v) kind k
-      (expr_let ctx) m
-  | m -> expr_app ctx fmt m
-and expr_app ctx fmt = function
-  | TApp (m, a) ->
-    fprintf fmt "@[<2>%a@ %a@]" (expr_app ctx) m (ty_atom ctx) a
-  | App (m, n) ->
-    fprintf fmt "@[<2>%a@ %a@]" (expr_app ctx) m (expr_atom ctx) n
-  | m -> expr_atom ctx fmt m
-and expr_atom ctx fmt = function
-  | Var v -> fprintf fmt "%s" (Bindlib.name_of v)
-  | m -> fprintf fmt "(@[%a@])" (expr_let ctx) m
-
-let expr fmt m = expr_let (Bindlib.free_vars (box_expr m)) fmt m

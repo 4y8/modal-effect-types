@@ -1,0 +1,34 @@
+type unit = Unit
+type int = Zero | Succ of int
+type list a = Nil | Cons of a, list a
+
+-- section 2.3
+-- current error when omitting the modality : Cannot unbox function in application todo
+eff gen a = yield : a => unit
+val as_list : [](<gen int>(unit -> unit) -> list int)
+let as_list f =
+  handle<gen int> f () with
+  | return u => Nil
+  | yield x r => Cons (x, r ())
+  end
+
+-- section 2.4
+val id1 : []([gen int](unit -> unit) -> [gen int, gen unit](unit -> unit))
+let id1 f = f
+
+-- current error : Modality mismatch todo
+-- val id2 : [](<>(unit -> unit) -> <gen int>(unit -> unit))
+-- let id2 f = f
+
+val id3 : []([gen int](unit -> unit) -> <gen int>(unit -> unit))
+let id3 f = f
+
+-- current error : Cannot access variable todo
+-- val id4 : [](<gen int>(unit -> unit) -> [gen int](unit -> unit))
+-- let id4 f = f
+
+-- current error : Cannot unbox function in application todo
+-- val app2 : [](<gen int>(unit -> unit) -> unit)
+-- let app2 f = f ()
+
+

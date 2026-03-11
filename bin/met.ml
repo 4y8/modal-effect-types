@@ -16,8 +16,9 @@ let read_file f =
             (Printf.sprintf "Unexpected token: \"%s\"" (Lexing.lexeme lb)) in
   if !show_ast then
     List.iter (fun ((_, d), _) -> print_endline @@ show_surface_decl d) p;
+  let p = check_prog p in
   if !eval then
-    ignore (Core.Eval.eval_prog (check_prog p));
+    ignore (Core.Eval.eval_prog p);
   close_in ic
 
 let () =

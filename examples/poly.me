@@ -1,0 +1,13 @@
+type unit = Unit
+
+val app : [](unit -> unit) -> unit -> unit
+let app f x = f x
+
+val id : [](forall a . a -> a)
+let id x = x
+
+val test : unit
+let test = app id ()
+
+val test2 : unit
+let test2 = id ()

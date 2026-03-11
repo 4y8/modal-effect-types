@@ -1,5 +1,8 @@
 open Syntax
 
+exception Mismatch of pure_type * pure_type
+exception Occurs of tvar * pure_type
+
 let (@:) = Context.apply
 
 let (^:) = TT.app_
@@ -44,6 +47,17 @@ let rec is_wf a gamma = match a with
     in
     mod_wf mu && is_wf a gamma
 
+let articulate alpha gamma =
+  let gamma, k, gamma' = Context.split_flex alpha gamma in
+  if k <> Any then
+      Errors.no_apply_abs None alpha;
+  let alpha1 = fresh_flex "alpha_1" in
+  let alpha2 = fresh_flex "alpha_2" in
+  let tau = TArr (TFlex alpha1, TFlex alpha2) in
+  alpha1, alpha2,
+  gamma @ Context.(BFlex (alpha1, Any, None) :: BFlex (alpha2, Any, None) ::
+                   BFlex (alpha, Any, Some tau) :: gamma')
+
 let rec instanciateR a alpha gamma = match a with
   | TFlex beta when Context.(alpha << beta) gamma->
     id (tflex_ alpha), Context.def_flex beta (TFlex alpha) gamma
@@ -51,15 +65,8 @@ let rec instanciateR a alpha gamma = match a with
     let gamma, k, gamma' = Context.split_flex alpha gamma in
     id (box_type tau), gamma @ (Context.BFlex (alpha, k, Some tau) :: gamma')
   | TArr (a, b) as a' ->
-    let gamma, k, gamma' = Context.split_flex alpha gamma in
-    if k <> Syntax.Any then
-      Type.kind_mismatch None (TArr (a, b)) Syntax.Abs Syntax.Any;
-    let alpha1 = fresh_flex "alpha_1" in
-    let alpha2 = fresh_flex "alpha_2" in
-    let tau = TArr (TFlex alpha1, TFlex alpha2) in
-    let m, theta = instanciateL alpha1 a @@
-      gamma @ Context.(BFlex (alpha1, Any, None) :: BFlex (alpha2, Any, None) ::
-                       BFlex (alpha, Any, Some tau) :: gamma') in
+    let alpha1, alpha2, gamma = articulate alpha gamma in
+    let m, theta = instanciateL alpha1 a gamma in
     let n, delta = instanciateR b alpha2 theta in
     let f = fresh_var "f" in
     let x = fresh_var "x" in
@@ -87,15 +94,9 @@ and instanciateL alpha a gamma = match a with
     let gamma, k, gamma' = Context.split_flex alpha gamma in
     id (box_type tau), gamma @ (Context.BFlex (alpha, k, Some tau) :: gamma')
   | TArr (a, b) ->
-    let gamma, k, gamma' = Context.split_flex alpha gamma in
-    if k <> Syntax.Any then
-      Type.kind_mismatch None (TArr (a, b)) Syntax.Abs Syntax.Any;
-    let alpha1 = fresh_flex "alpha_1" in
-    let alpha2 = fresh_flex "alpha_2" in
+    let alpha1, alpha2, gamma = articulate alpha gamma in
     let tau = TArr (TFlex alpha1, TFlex alpha2) in
-    let m, theta = instanciateR a alpha1 @@
-      gamma @ Context.(BFlex (alpha1, Any, None) :: BFlex (alpha2, Any, None) ::
-                       BFlex (alpha, Any, Some tau) :: gamma') in
+    let m, theta = instanciateR a alpha1 gamma in
     let n, delta = instanciateL alpha2 b theta in
     let f = fresh_var "f" in
     let x = fresh_var "x" in
@@ -118,8 +119,18 @@ let rec check_ a b gamma = match a, b with
   | TFlex v, TFlex v'
   | TVar v, TVar v' when Bindlib.eq_vars v v' ->
     id (box_type a), gamma
-  | TCon (s, [||]), TCon (s', [||]) when s = s' ->
-    id (box_type a), gamma
+  | TCon (s, arr), TCon (s', arr') when s = s' ->
+    let n = Array.length arr in
+    let rec loop i gamma =
+      if i = n then gamma
+      else
+        let _, theta = check_ (Context.apply gamma arr.(i))
+            (Context.apply gamma arr'.(i)) gamma in
+        let _, delta = check_ (Context.apply theta arr'.(i))
+            (Context.apply theta arr.(i)) theta in
+        loop (i + 1) delta
+    in
+    id (box_type a), loop 0 gamma
 
   | TArr (a, b), TArr (a', b') ->
     let m, theta = check_ a' a gamma in
@@ -178,7 +189,8 @@ let rec check_ a b gamma = match a, b with
           lam_ (box_type g') (bind_var y @@ mod_ mu_ (var_ y)) ^:
           m ^: var_ x')), delta
     else
-      failwith "todo : subtype check_"
+      raise (Mismatch (a, b))
 
 let check a b gamma =
-  Bindlib.unbox (fst (check_ a b gamma))
+  let m, delta = check_ a b gamma in
+  Bindlib.unbox m, delta

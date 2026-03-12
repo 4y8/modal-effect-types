@@ -29,6 +29,9 @@ let no_unboxing loc _ _ =
 let missing_declaration loc x =
   Error.error_str loc ("Missing declaration for function " ^ x)
 
+let two_effect_var loc =
+  Error.error_str loc "Cannot have two effect variables in a single row"
+
 let not_cons loc c _ = Error.error loc
     (fun fmt -> Format.fprintf fmt
         "Constructor %s is not of the good type" c)
@@ -38,6 +41,10 @@ let nb_arg_mismatch loc e n l = Error.error loc
         "Wrong number of arguments for %s, expected %d, got %d"
         e n (List.length l))
 
+let non_last_evar loc e = Error.error loc
+    (fun fmt -> Format.fprintf fmt
+        "Effect type variable %s should be at the end of the row" e)
+
 let rec is_val = function
   | SVar _ -> true
   | SLam (_, _) -> true
@@ -46,25 +53,37 @@ let rec is_val = function
   | SCons (_, l) -> List.for_all (fun {sexpr; _} -> is_val sexpr) l
   | _ -> false
 
+let (<<<) k k' =
+  k = k' || (k = Abs && k' = Any)
+
 let is_mod = function TMod _ -> true | _ -> false
 
 let is_forall = function TForA _ -> true | _ -> false
 
-let rec check_type ctx t = match t.stype with
-  | STMod (m, t) -> TMod (check_mod ctx m, check_type ctx t)
-  | STArr (t, t') -> TArr (check_type ctx t, check_type ctx t')
+let rec check_type ctx t =
+  let check_type_kind_any ctx t =
+    check_type_kind ctx t Any
+  in
+  match t.stype with
+  | STMod (m, t) ->
+    TMod (check_mod ctx m, check_type_kind_any ctx t)
+  | STArr (t, t') ->
+    TArr (check_type_kind_any ctx t, check_type_kind_any ctx t')
   | STForA (x, k, a) ->
     let ctx, v = fresh_tvar ctx x k in
-    let a = check_type ctx a in
-    TForA (k, Bindlib.unbox (Bindlib.bind_var v (box_type a)))
+    let a = check_type_kind_any ctx a in
+    TForA (k, Bindlib.(box_type a |> bind_var v |> unbox))
   | STCons (c, l) ->
     begin match List.assoc_opt c ctx.data with
       | None -> unknown_var t.tloc c
-      | Some (n, _) ->
-        if n <> List.length l then
-          nb_arg_mismatch t.tloc c n l;
-        TCon (c, Array.of_list @@ List.map (check_type ctx) l)
+      | Some { targs; _ } ->
+        if List.length targs <> List.length l then
+          nb_arg_mismatch t.tloc c (List.length targs) l;
+        let args = Array.of_list @@ List.map2 (check_type_kind ctx)
+            l targs in
+        TCon (c, args)
     end
+  | SECtx e -> ECtx (check_effect_ctx ctx e)
   | STVar x ->
     match List.assoc_opt x ctx.tid with
     | Some v ->
@@ -73,27 +92,53 @@ let rec check_type ctx t = match t.stype with
       match List.assoc_opt x ctx.data with
       | None -> unknown_var t.tloc x
       | Some _ -> TCon (x, [||])
+and check_type_kind ctx t k =
+  let a = check_type ctx t in
+  let k' = get_kind ctx a in
+  if not (k' <<< k) then
+    kind_mismatch t.tloc a k k';
+  a
 
 and check_mod ctx m = match m.smod with
   | SMAbs e -> MAbs (check_effect_ctx ctx e)
   | SMRel (l, d) ->
-    MRel (check_mask ctx l, check_effect_ctx ctx d)
+    MRel (check_mask ctx l, check_effect_ext ctx d)
 
-and check_effect_ctx ctx l =
-  List.map (fun {seff_name; seff_args; eloc} ->
+and check_effect ctx {seff_name; seff_args; eloc} args_kind t =
+  if List.length args_kind <> List.length seff_args then
+    nb_arg_mismatch eloc seff_name (List.length args_kind) seff_args;
+  let args = List.map2 (check_type_kind ctx) seff_args args_kind
+    |> Array.of_list in
+  let ectx = Bindlib.msubst t args in
+  List.iter (fun { eff_type = (a, b); _ } ->
+      if not (is_abs ctx a) then kind_mismatch eloc a Abs Any;
+      if not (is_abs ctx b) then kind_mismatch eloc b Abs Any) ectx;
+  ectx
+
+and check_effect_ext ctx l =
+  List.map (fun ({seff_name; eloc; _} as seff) ->
       match List.assoc_opt seff_name ctx.effects with
       | None -> unknown_eff eloc seff_name
-      | Some (n, t) ->
-        if n <> List.length seff_args then
-          nb_arg_mismatch eloc seff_name n seff_args;
-        let args = List.map (check_type ctx) seff_args
-                |> Array.of_list in
-        let ectx = Bindlib.msubst t args in
-        List.iter (fun { eff_type = (a, b); _ } ->
-            if not (is_abs ctx a) then kind_mismatch eloc a Abs Any;
-            if not (is_abs ctx b) then kind_mismatch eloc b Abs Any) ectx;
-        ectx
-    ) l |> List.flatten
+      | Some { eargs ; eops } -> check_effect ctx seff eargs eops) l
+  |> List.flatten
+
+and check_effect_ctx ctx l =
+  List.fold_right (fun ({seff_name; eloc; _} as seff) (d, eps) ->
+      match List.assoc_opt seff_name ctx.effects with
+      | Some { eargs ; eops } ->
+        if not Option.(is_none eps) then
+          non_last_evar eloc seff_name;
+        (check_effect ctx seff eargs eops @ d, eps)
+      | None ->
+        match List.assoc_opt seff_name ctx.tid with
+        | None -> unknown_eff eloc seff_name
+        | Some v ->
+          if get_var_kind ctx.gamma v <> Effect then
+            kind_mismatch eloc (TVar v) Effect (get_var_kind ctx.gamma v);
+          match eps with
+          | None -> d, Some (TVar v, [])
+          | Some _ -> two_effect_var eloc)
+    l ([], None)
 
 and check_mask ctx = function
   | [] -> []
@@ -124,6 +169,11 @@ let split_cons loc = function
   | TCon (c, l) -> c, l
   | a -> expected_cons loc a
 
+let ectx_of_type = function
+  | ECtx e -> e
+  | TVar v -> ([], Some (TVar v, []))
+  | _ -> failwith "internal error: ectx_of_type"
+
 let rec split_pat ctx vars mu t { spat; ploc } =
   let nu, g = get_guarded t in
   let mu = Effects.compose mu nu in
@@ -134,7 +184,7 @@ let rec split_pat ctx vars mu t { spat; ploc } =
     (ctx, (v :: vars)), PVar (TMod (mu, g))
   | SPCons (c, l) ->
     let tc, tl = split_cons ploc g in
-    let _, cons = List.assoc tc ctx.data in
+    let { cons; _ } = List.assoc tc ctx.data in
     let tcons = match List.assoc_opt c cons with
       | None -> not_cons ploc c g
       | Some tcons -> Bindlib.msubst tcons tl
@@ -148,7 +198,7 @@ let rec split_pat ctx vars mu t { spat; ploc } =
 let join_type loc ctx f t t' =
   let mu, g = get_guarded t in
   let nu, g' = get_guarded t' in
-  if g = g' then
+  if g <> g' then
     type_mismatch loc g g';
   if is_abs ctx g then
     g
@@ -179,8 +229,8 @@ let rec check ctx ({loc; sexpr} as m) a e =
   (* B-HandlerCheck *)
   | SHand (m, d, (l, (x, n))) ->
     let b = a in (* stay consistent with the paper *)
-    let d = check_effect_ctx ctx d in
-    let m, a = infer (ctx <: Lock (MRel ([], d), e)) m (d @ e) in
+    let d = check_effect_ext ctx d in
+    let m, a = infer (ctx <: Lock (MRel ([], d), e)) m (Effects.extend d e) in
     let ctx', ret = fresh_var ctx x (TMod (MRel ([], d), a)) in
     let n = Bindlib.(check ctx' n b e |> box_expr |> bind_var ret |> unbox) in
     let check_clause (li, (loc, pi, ri, ni)) =
@@ -209,9 +259,9 @@ let rec check ctx ({loc; sexpr} as m) a e =
          Bindlib.(check ctx n a e |> box_expr |> bind_var dummy |> unbox))
   | SCons (c, l) ->
     let tc, tl = split_cons loc a in
-    let _, constructors = List.assoc tc ctx.data in
+    let { cons ; _ } = List.assoc tc ctx.data in
     begin
-      match List.assoc_opt c constructors with
+      match List.assoc_opt c cons with
       | None -> unknown_cons loc c tc
       | Some cargs ->
         let cargs = Bindlib.msubst cargs tl in
@@ -272,13 +322,15 @@ and infer ctx {loc; sexpr} e =
     if not Effects.(sub_mod mu id e) then
       no_unboxing loc mu e;
     let k, b = split_forall loc g in
-    if k = Abs && not (is_abs ctx a) then
-      kind_mismatch tloc a Abs Any;
-    m, Bindlib.subst b a
+    let k' = get_kind ctx a in
+    if not (k' <<< k) then
+      kind_mismatch tloc a k k';
+    m,
+    if k = Effect then Effects.subst b (ectx_of_type a) else Bindlib.subst b a
 
   (* B-Do *)
   | SDo (l, m) ->
-    let (a, b) = match Effects.get_eff l e with
+    let (a, b) = match Effects.get_eff_ctx l e with
       | None -> unknown_eff loc l
       | Some p -> p
     in
@@ -287,8 +339,8 @@ and infer ctx {loc; sexpr} e =
 
   (* B-HandlerInfer *)
   | SHand (m, d, (l, (x, n))) ->
-    let d = check_effect_ctx ctx d in
-    let m, a = infer (ctx <: Lock (MRel ([], d), e)) m (d @ e) in
+    let d = check_effect_ext ctx d in
+    let m, a = infer (ctx <: Lock (MRel ([], d), e)) m (Effects.extend d e) in
     let ctx', ret = fresh_var ctx x (TMod (MRel ([], d), a)) in
     let n, b' = infer ctx' n e in
     let n = Bindlib.(box_expr n |> bind_var ret |> unbox ) in
@@ -352,27 +404,28 @@ let check_decl (ctx, prog) d = match d with
                ; gamma = List.map (fun (v, k) -> BType (v, k)) alphas @
                          ctx.gamma }
     in
-    let _ = check ctx' e g [] in ctx, (x, e) :: prog
+    let _ = check ctx' e g ([], None) in ctx, (x, e) :: prog
   | (x, SDEff (args, l)), _ ->
-    let ctx', mvar = fresh_tvars ctx (List.map (fun x -> x, Any) args) in
+    let ctx', mvar = fresh_tvars ctx args in
     let l =
       List.map (fun (x, (a, b)) ->
         { eff_name = x; eff_type = check_type ctx' a, check_type ctx' b })
-        l |> box_effect_ctx in
+        l |> box_effect_ext in
     { ctx with
-      effects = (x, (Array.length mvar, Bindlib.(bind_mvar mvar l |> unbox)))
+      effects = (x, { eargs = snd (List.split args)
+                    ; eops = Bindlib.(bind_mvar mvar l |> unbox)})
                 :: ctx.effects }, prog
   | (x, SDADT (args, l)), _ ->
     (* add mock definition in the context just for type verification *)
-    let n = List.length args in
-    let ctx' = { ctx with data = (x, (n, [])) :: ctx.data } in
-    let ctx', mvar = fresh_tvars ctx' (List.map (fun x -> x, Any) args) in
-    let l = List.map
+    let targs = snd (List.split args) in
+    let ctx' = { ctx with data = (x, { targs; cons = [] }) :: ctx.data } in
+    let ctx', mvar = fresh_tvars ctx' args in
+    let cons = List.map
         (fun (c, l) ->
            let l = List.map (Fun.compose box_type (check_type ctx')) l
                 |> Bindlib.box_list in
            c, Bindlib.(bind_mvar mvar l |> unbox)) l in
-    { ctx with data = (x, (n, l)) :: ctx.data }, prog
+    { ctx with data = (x, { targs; cons }) :: ctx.data }, prog
 
 let check_prog =
   let int = TCon ("int", [||]) in
@@ -381,19 +434,20 @@ let check_prog =
   let unit = TCon ("unit", [||]) in
   let (@->) t t' = TArr (t, t') in
   let v = Bindlib.new_var (fun v -> TVar v) "fail" in
+  let abs t = TMod (MAbs ([], None), t) in
   let init_ctx, _ =
     fresh_vars
       { gamma = [] ; tid = [] ; id = [] ; effects = []
-      ; data = ["int", (0, []); "string", (0, [])] }
-      [("+", TMod (MAbs [], int @-> int @-> int));
-       ("*", TMod (MAbs [], int @-> int @-> int));
-       ("-", TMod (MAbs [], int @-> int @-> int));
-       ("=", TMod (MAbs [], int @-> int @-> bool));
-       ("string_eq", TMod (MAbs [], string @-> string @-> bool));
-       ("^", TMod (MAbs [], string @-> string @-> string));
-       ("&&", TMod (MAbs [], bool @-> bool @-> bool));
-       ("fail", TMod (MAbs [],
-                      TForA (Any, Bindlib.(unit @-> (TVar v) |> box_type |> bind_var v |> unbox))));
-       ("print", TMod (MAbs [], string @-> unit))]
+      ; data = ["int", { targs = [] ; cons = [] };
+                "string", { targs = [] ; cons = [] } ] }
+      [("+", abs (int @-> int @-> int));
+       ("*", abs (int @-> int @-> int));
+       ("-", abs (int @-> int @-> int));
+       ("=", abs (int @-> int @-> bool));
+       ("string_eq", abs (string @-> string @-> bool));
+       ("^", abs (string @-> string @-> string));
+       ("&&", abs (bool @-> bool @-> bool));
+       ("fail", abs (TForA (Any, Bindlib.(unit @-> (TVar v) |> box_type |> bind_var v |> unbox))));
+       ("print", abs (string @-> unit))]
   in
   Fun.compose snd (List.fold_left check_decl (init_ctx, []))

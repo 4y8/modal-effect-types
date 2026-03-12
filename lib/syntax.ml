@@ -10,8 +10,8 @@ type surface_mdesc
 and surface_mod = { smod : surface_mdesc ; mloc : loc }
 
 and surface_effect =
-  { seff_name : string ;
-    seff_args : surface_type list ; eloc : loc }
+  { seff_name : string
+  ; seff_args : surface_type list ; eloc : loc }
 
 and surface_tdsec
   = STArr of surface_type * surface_type
@@ -19,6 +19,7 @@ and surface_tdsec
   | STVar of string
   | STCons of string * surface_type list
   | STForA of string * kind * surface_type
+  | SECtx of surface_effect list
 and surface_type = { stype : surface_tdsec ; tloc : loc }
 [@@deriving show]
 
@@ -51,10 +52,11 @@ and surface_handler = (string * (loc * string * string * surface_expr)) list *
 [@@deriving show]
 
 type surface_decl
-  = SDEff of string list * (string * (surface_type * surface_type)) list
+  = SDEff of (string * kind) list *
+             (string * (surface_type * surface_type)) list
   | SDSig of surface_type
   | SDFun of surface_expr
-  | SDADT of string list * ((string * surface_type list) list)
+  | SDADT of (string * kind) list * ((string * surface_type list) list)
 [@@deriving show]
 
 (* uncomment for debugging
@@ -66,12 +68,13 @@ let pp_binder _ _ _ _ = ()
 
 type pure_mod
   = MAbs of effect_ctx
-  | MRel of string list * effect_ctx
+  | MRel of string list * pure_effect list
 
 and pure_effect
   = { eff_name : string ; eff_type : pure_type * pure_type }
 
-and effect_ctx = pure_effect list
+and effect_ctx
+  = pure_effect list * (pure_type * string list) option
 
 and pure_type
   = TArr of pure_type * pure_type
@@ -79,6 +82,7 @@ and pure_type
   | TVar of tvar
   (* use arrays to use Bindlib's mbinders *)
   | TCon of string * pure_type array
+  | ECtx of effect_ctx
   | TForA of kind * (pure_type, pure_type) Bindlib.binder
 
 and tvar = pure_type Bindlib.var
@@ -97,6 +101,7 @@ let mrel_ l = Bindlib.box_apply (fun d -> MRel (l, d))
 
 let mabs_ = Bindlib.box_apply (fun e -> MAbs e)
 
+let ectx_ = Bindlib.box_apply (fun e -> ECtx e)
 
 let rec box_type = function
   | TVar v -> tvar_ v
@@ -104,19 +109,28 @@ let rec box_type = function
   | TArr (a, b) -> tarr_ (box_type a) (box_type b)
   | TCon (c, l) -> tcon_ c (Array.map box_type l)
   | TForA (k, a) -> tfora_ k (Bindlib.box_binder box_type a)
+  | ECtx e -> ectx_ (box_effect_ctx e)
 
-and box_effect_ctx e =
+and box_effect_ext d =
   let pure_effect_ eff_name = Bindlib.box_apply2
       (fun a b -> { eff_name; eff_type = a, b })
   in
   let box_effect { eff_name; eff_type = (a, b) } =
     pure_effect_ eff_name (box_type a) (box_type b)
   in
-  Bindlib.box_list (List.map box_effect e)
+  Bindlib.box_list (List.map box_effect d)
+
+and box_effect_ctx (d, eps) =
+  let eps_ = match eps with
+    | None -> Bindlib.box_opt None
+    | Some (eps, l) ->
+      Bindlib.(box_opt (Some (box_pair (box_type eps) (box l))))
+  in
+  Bindlib.box_pair (box_effect_ext d) eps_
 
 and box_mod = function
   | MAbs e -> mabs_ (box_effect_ctx e)
-  | MRel (l, d) -> mrel_ l (box_effect_ctx d)
+  | MRel (l, d) -> mrel_ l (box_effect_ext d)
 
 type concrete_mod = pure_mod * effect_ctx
 
@@ -130,7 +144,7 @@ type expr
   | App of expr * expr
   | Let of expr * pure_type * (expr, expr) Bindlib.binder
   | Con of string * expr list
-  | Hand of expr * effect_ctx *
+  | Hand of expr * pure_effect list *
             (expr, expr) Bindlib.binder *
             (string * (expr, (expr, expr) Bindlib.binder) Bindlib.binder) list
   | Match of expr * (pat * (expr, expr) Bindlib.mbinder) list

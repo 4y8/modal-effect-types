@@ -5,30 +5,50 @@ type 'a ctx_binding
   | BVar of 'a Bindlib.var * pure_type
   | BType of tvar * kind
 
+type eff =
+  { eargs : kind list ; eops : (pure_type, pure_effect list) Bindlib.mbinder }
+
+type adt =
+  { targs : kind list ; cons : (string * (pure_type, pure_type list) Bindlib.mbinder) list }
+
 type 'a ctx =
   { gamma : 'a ctx_binding list
-  ; effects : (string * (int * (pure_type, effect_ctx) Bindlib.mbinder)) list
-  ; data : (string * (int * (string * (pure_type, pure_type list) Bindlib.mbinder) list)) list
+  ; effects : (string * eff) list
+  ; data : (string * adt) list
   ; id : (string * var) list
   ; tid : (string * tvar) list }
 
 let (<:) ({gamma; _} as ctx) b =
   {ctx with gamma = b :: gamma}
 
-let rec get_kind gamma x = match gamma with
+let rec get_var_kind gamma x = match gamma with
   | [] -> failwith "get_kind: internal error"
   | BType (y, k) :: _ when Bindlib.eq_vars x y -> k
-  | _ :: tl -> get_kind tl x
+  | _ :: tl -> get_var_kind tl x
 
 (* Section 4.4 *)
-let rec is_abs ctx = function
-  | TMod (MAbs _, _) -> true
-  | TMod (MRel _, a) -> is_abs ctx a
-  | TArr (_, _) -> false
-  | TVar v -> get_kind ctx.gamma v = Abs
+
+let rec get_kind ?(seen_adt=[]) ctx = function
+  | TMod (MAbs _, _) -> Abs
+  | TMod (MRel _, a) -> get_kind ~seen_adt ctx a
+  | TArr (_, _) -> Any
+  | TVar v -> get_var_kind ctx.gamma v
   | TForA (k, a) ->
-    let v, a = Bindlib.unbind a in is_abs (ctx <: BType (v, k)) a
-  | TCon (_, l) -> Array.for_all (is_abs ctx) l
+    let v, a = Bindlib.unbind a in get_kind ~seen_adt (ctx <: BType (v, k)) a
+  | TCon (s, _) when List.mem s seen_adt -> Abs
+  | TCon (s, arr) ->
+    let seen_adt = s :: seen_adt in
+    if Array.for_all (fun a -> get_kind ~seen_adt ctx a = Abs) arr then
+      Abs
+    else
+      Any
+  | ECtx _ -> Effect
+
+let is_abs ctx a =
+  get_kind ctx a = Abs
+
+let is_type ctx a =
+  get_kind ctx a <> Effect
 
 let rec get_guarded = function
   | TMod (mu, t) -> let nu, g = get_guarded t in

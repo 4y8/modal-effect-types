@@ -76,11 +76,15 @@ let atom_type :=
   | loc_type (
     | LCURLY; t = stype; RCURLY;
     { STArr ({stype = STCons ("unit", []); tloc = None}, t) }
-    | ~ = IDENT; <STVar>
-    | ~ = smod; ~ = atom_type; <STMod>)
+    | LSQUARE; ~ = separated_list(COMMA, seff); RSQUARE ; <SECtx>
+    | ~ = IDENT; <STVar>)
+
+let mod_type :=
+  | ~ = atom_type; <>
+  | loc_type ( | ~ = smod; ~ = atom_type; <STMod>)
 
 let cons_type :=
-  | ~ = atom_type; <>
+  | ~ = mod_type; <>
   | loc_type (
     | ~ = IDENT; ~ = atom_type+; <STCons>)
 
@@ -94,12 +98,15 @@ let prop_type :=
 by the programmer as it can be infered *)
 
 let targ :=
-  | LSQUARE; x = IDENT; RSQUARE; { (x, Abs, Some ($startpos, $endpos)) }
-  | x = IDENT; { (x, Any, Some ($startpos, $endpos)) }
+  | LSQUARE; x = IDENT; RSQUARE; { (x, Abs) }
+  | x = IDENT; { (x, Any) }
+
+let targ_loc :=
+  | p = targ; { (fst p, snd p, Some ($startpos, $endpos)) }
 
 let stype :=
   | ~ = prop_type; <>
-  | FORALL;  l = targ+; DOT; t = stype; { wrap_type l t }
+  | FORALL;  l = targ_loc+; DOT; t = stype; { wrap_type l t }
 
 let loc_expr(expr) ==
   sexpr = expr; { { sexpr; loc = Some ($startpos, $endpos) } }
@@ -195,7 +202,7 @@ eff:
 ;
 
 decl_eff:
-  | EFFECT x = IDENT args = IDENT* EQU l = separated_list(PIPE, eff)
+  | EFFECT x = IDENT args = targ* EQU l = separated_list(PIPE, eff)
     { x, SDEff (args, l) }
 ;
 
@@ -214,7 +221,7 @@ adt:
 ;
 
 decl_adt:
-  | TYPE x = IDENT args = IDENT* EQU l = separated_list(PIPE, adt)
+  | TYPE x = IDENT args = targ* EQU l = separated_list(PIPE, adt)
     { x, SDADT (args, l)}
 ;
 

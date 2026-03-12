@@ -20,7 +20,7 @@ let _ =
       | Either.Left (a, b) ->
         let a, b = Type.(fst @@ check_type a ctx, fst @@ check_type b ctx) in
         let m, _ = Subtype.check a b ctx.gamma in
-        Format.printf "%a@." Pprint.expr m;
+        Format.printf "%a@." TT.Pprint.expr m;
         loop ctx
     with
       Error.Exit ->

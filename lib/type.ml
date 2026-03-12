@@ -100,18 +100,6 @@ let rec split_pat vars mu t { spat; ploc } =
         (List.combine tcons l) (vars, [])
     in return (res, PCon (c, l))
 
-let join_type loc f t t' =
-  let mu, g = get_guarded t in
-  let nu, g' = get_guarded t' in
-  if g = g' then
-    type_mismatch loc g g';
-  let* c = is_abs g in
-  if c then
-    return g
-  else match Effects.join_mod mu nu f with
-    | None -> return @@ mod_mismatch loc mu nu g
-    | Some lam -> return @@ TMod (lam, g)
-
 let check_subtype loc a b ctx =
   let _, delta =
     try
@@ -119,6 +107,18 @@ let check_subtype loc a b ctx =
     with Subtype.Mismatch (a, b) -> type_mismatch loc a b
   in
   (), { ctx with gamma = delta }
+
+let join_type loc f t t' =
+  let mu, g = get_guarded t in
+  let nu, g' = get_guarded t' in
+  check_subtype loc g g' >>
+  check_subtype loc g' g >>
+  let* c = is_abs g in
+  if c then
+    return g
+  else match Effects.join_mod mu nu f with
+    | None -> mod_mismatch loc mu nu g
+    | Some lam -> return @@ TMod (lam, g)
 
 let articulate alpha ctx =
   let alpha1, alpha2, gamma = Subtype.articulate alpha ctx.gamma in

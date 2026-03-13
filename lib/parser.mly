@@ -40,7 +40,7 @@ let spair (a, b) = SCons ("Pair", [a; b])
 %token IN END VAL OF EFFECT
 %token PLUS MINUS TIMES AND CARET
 %token LANGLE RANGLE LSQUARE RSQUARE LCURLY RCURLY LPAR RPAR
-%token COMMA PIPE ARROW DARROW DOT DCOL EQU WILDCARD AT SCOL
+%token COMMA PIPE ARROW DARROW DOT DCOL EQU WILDCARD AT SCOL BANG
 %token UNIT
 
 %left AND
@@ -130,7 +130,7 @@ let pattern :=
     { { spat = p; ploc = Some ($startpos, $endpos) } }
 
 let handle_clause :=
-  | PIPE; l = string_loc; p = IDENT; r = IDENT; DARROW; n = sexpr;
+  | PIPE; l = string_loc; p = arg; r = IDENT; DARROW; n = sexpr;
     { (fst l, (snd l, p, r, n)) }
 
 let match_clause :=
@@ -144,20 +144,26 @@ let atom_expr :=
    | ~ = IDENT; <SVar>
    | ~ = INT; <SInt>
    | ~ = STRING; <SStr>
+   | MASK; LANGLE; ~ = separated_list(COMMA, string_loc); RANGLE; ~ = atom_expr;
+     <SMask>
    | UNIT; { SCons ("Unit", []) }
    | HANDLE; LANGLE; d = separated_list (COMMA, seff); RANGLE; m = sexpr; WITH;
-     PIPE; RETURN; p = IDENT; DARROW; n = sexpr;
+     PIPE; RETURN; p = arg; DARROW; n = sexpr;
      h = handle_clause*;
      END; { SHand (m, d, (h, (p, n))) }
    | MATCH; ~ = sexpr; WITH; ~ = match_clause*; END; <SMatch>)
 
 let single_cons := loc_expr (| c = MIDENT; { SCons (c, []) })
 
+let unit_arg :=
+  | loc_expr(| BANG; { SCons ("Unit", []) })
+
 let app_expr :=
   | ~ = atom_expr; <>
   | loc_expr(
     | ~ = MIDENT; LPAR; ~ = separated_list(COMMA, sexpr); RPAR; <SCons>
     | ~ = app_expr; ~ = atom_expr; <SApp>
+    | ~ = app_expr; ~ = unit_arg; <SApp>
     | ~ = app_expr; ~ = single_cons; <SApp>
     | ~ = app_expr; AT; ~ = atom_type; <SAppT>)
 
@@ -211,8 +217,17 @@ decl_sig:
   | VAL x = IDENT DCOL t = stype { x, SDSig t }
 ;
 
+let arg :=
+  | x = IDENT; { x }
+  | UNIT; { "" } (* sloppy *)
+  | BANG; { "" } (* sloppy *)
+  | WILDCARD; { "" }
+
+let arg_loc :=
+  | x = arg; { x, Some ($startpos, $endpos) }
+
 decl_fun:
-  | LET x = IDENT args = string_loc* EQU e = sexpr
+  | LET x = IDENT args = arg_loc* EQU e = sexpr
     { x, SDFun (wrap_lam args e) }
 ;
 

@@ -9,6 +9,7 @@ type value
   | VInt of int
   | VStr of string
   | VCon of string * value list
+  | VMask of value
 [@@deriving show]
 
 type _ Effect.t += Do : string * value -> value t
@@ -61,7 +62,17 @@ let rec eval ctx env {sexpr; _} = match sexpr with
   | SAnn (m, _) -> eval ctx env m
   | SSeq (m, n) -> let _ = eval ctx env m in eval ctx env n
   | SDo (e, m) -> perform (Do (e, eval ctx env m))
-  | SMask _ -> failwith "todo"
+  | SMask (l, m) ->
+    let l, _ = List.split l in
+    begin try
+        eval ctx env m
+      with
+      | effect (Do (e, v)), k ->
+        if List.mem e l then
+          continue k (perform (Do (e, VMask v)))
+        else
+        continue k (perform (Do (e, v)))
+    end
   | SLet (x, m, n) -> eval ctx ((x, eval ctx env m) :: env) n
   | SMatch (m, l) ->
     let v = eval ctx env m in
@@ -76,9 +87,10 @@ let rec eval ctx env {sexpr; _} = match sexpr with
       eval ctx ((r, v) :: env) n
     with
     | effect (Do (e, v)), k ->
-      match List.assoc_opt e h with
-      | None -> continue k (perform (Do (e, v)))
-      | Some (_, pi, ri, ni) ->
+      match List.assoc_opt e h, v with
+      | Some _, VMask v
+      | None, v -> continue k (perform (Do (e, v)))
+      | Some (_, pi, ri, ni), _ ->
         eval ctx ((pi, v) :: (ri, VClo (continue k)) :: env) ni
 
 and eval_pat env v {spat; _} = match spat with

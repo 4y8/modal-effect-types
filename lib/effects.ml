@@ -73,10 +73,13 @@ let right_residual m m' f = match m, m' with
     | Some f ->
       Some (MRel (erase_types d' @ (mask_diff l l'), d @ f))
 
+let eq_mask l l' =
+  List.sort compare l = List.sort compare l'
+
 let eq_eff_var (eps, l) (eps', l') =
   match eps, eps' with
   | TVar v, TVar v' ->
-    Bindlib.eq_vars v v' && List.sort compare l = List.sort compare l'
+    Bindlib.eq_vars v v' && eq_mask l l'
   | _ -> failwith "impossible"
 
 let rec sub_eff d d' =
@@ -102,8 +105,7 @@ and eq_mod m m' =
   | MAbs (e, None), MAbs (e', None) -> e === e'
   | MAbs (e, Some eps), MAbs (e', Some eps') ->
     eq_eff_var eps eps' && e === e'
-  | MRel (l, d), MRel (l', d') ->
-    List.sort compare l = List.sort compare l' && d === d'
+  | MRel (l, d), MRel (l', d') -> eq_mask l l' && d === d'
   | _, _ -> false
 
 and (===) d d' = sub_eff d d' && sub_eff d' d

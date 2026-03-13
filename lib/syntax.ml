@@ -41,7 +41,7 @@ type surface_desc
   | SSeq of surface_expr * surface_expr
   | SLet of string * surface_expr * surface_expr
   | SAppT of surface_expr * surface_type
-  | SMask of surface_expr * (string * loc) list
+  | SMask of (string * loc) list * surface_expr
   | SHand of surface_expr * surface_effect list * surface_handler
   | SCons of string * surface_expr list
   | SMatch of surface_expr * (surface_pat * surface_expr) list
@@ -153,6 +153,7 @@ type expr
   | App of expr * expr
   | Let of expr * pure_type * (expr, expr) Bindlib.binder
   | Con of string * expr list
+  | Mask of string list * expr
   | Hand of expr * op list *
             (expr, expr) Bindlib.binder *
             (string * (expr, (expr, expr) Bindlib.binder) Bindlib.binder) list
@@ -178,6 +179,8 @@ let app_ = Bindlib.box_apply2 (fun m n -> App (m, n))
 let let_ = Bindlib.box_apply3 (fun m a n -> Let (m, a, n))
 
 let con_ c l = Bindlib.box_apply (fun l -> Con (c, l)) (Bindlib.box_list l)
+
+let mask_ l = Bindlib.box_apply (fun m -> Mask (l, m))
 
 let hand_ m d ret h =
   let h = List.map (fun (e, b) -> Bindlib.box_apply (fun b -> (e, b)) b) h
@@ -207,6 +210,7 @@ let rec box_expr = function
   | Let (m, a, n) ->
     let_ (box_expr m) (box_type a) (Bindlib.box_binder box_expr n)
   | Con (c, l) -> con_ c (List.map box_expr l)
+  | Mask (l, m) -> mask_ l (box_expr m)
   | Hand (m, d, ret, h) ->
     hand_ (box_expr m) d (Bindlib.box_binder box_expr ret)
       (List.map (fun (e, b) ->

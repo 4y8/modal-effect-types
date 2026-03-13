@@ -19,6 +19,8 @@ let expected_val loc _ = Error.error_str loc "Expected a value todo"
 
 let mod_mismatch loc _ _ _ = Error.error_str loc "Modality mismatch todo"
 
+let mask_mismatch loc _ _ = Error.error_str loc "Expected type with mask todo"
+
 let kind_mismatch loc _ _ _ = Error.error_str loc "Kind mismatch todo"
 
 let no_access loc _ _ _ = Error.error_str loc "Cannot access variable todo"
@@ -219,17 +221,33 @@ let rec check ctx ({loc; sexpr} as m) a e =
         check (ctx <: Lock (mu, e)) m a (Effects.apply_mod mu e)
       | _ -> failwith "impossible"
     end
+
   (* B-Forall *)
   | v when is_val v && is_forall a ->
     let k, a = split_forall loc a in
     let v, a = Bindlib.unbind a in
     check (ctx <: BType (v, k)) m a e
+
   (* B-Abs *)
   | SLam (x, m) ->
     let (a, b) = split_arr loc a in
     let ctx, v = fresh_var ctx x a in
     let m = check ctx m b e in
     Lam (a, Bindlib.(box_expr m |> bind_var v |> unbox))
+
+  (* B-MaskCheck *)
+  | SMask (l, m) ->
+    List.iter (fun (l, loc) ->
+        if not List.(assoc_opt l ctx.effects <> None) then
+          unknown_eff loc l) l;
+    let l, _ = List.split l in
+    let a = match a with
+      | TMod (MRel (l', []), a) when Effects.eq_mask l l' -> a
+      | _ -> mask_mismatch loc l a
+    in
+    let m = check ctx m a (Effects.remove_labels e l) in
+    Mask (l, m)
+
   (* B-HandlerCheck *)
   | SHand (m, d, (l, (x, n))) ->
     let b = a in (* stay consistent with the paper *)
@@ -248,6 +266,7 @@ let rec check ctx ({loc; sexpr} as m) a e =
                   |> unbox)
     in
     Hand (m, ops, n,  List.map check_clause l)
+
   (* B-CrispSumCheck and B-CrispPairCheck *)
   | SMatch (v, l) ->
     let m, t = infer ctx v e in
@@ -257,6 +276,7 @@ let rec check ctx ({loc; sexpr} as m) a e =
           let mvar = Array.of_list vars in
           p, Bindlib.(check ctx n a e |> box_expr |> bind_mvar mvar |> unbox)) l
     in Match (m, l)
+
   | SSeq (m, n) ->
     let m = check ctx m (TCon ("unit", [||])) e in
     let dummy = Bindlib.new_var (fun v -> Var v) "unit" in
@@ -308,6 +328,16 @@ and infer ctx {loc; sexpr} e =
     let a = check_type ctx a in
     let m = check ctx m a e in
     m, a
+
+  (* B-MaskInfer *)
+  | SMask (l, m) ->
+    List.iter (fun (l, loc) ->
+        if not List.(assoc_opt l ctx.effects <> None) then
+          unknown_eff loc l) l;
+    let l, _ = List.split l in
+
+    let m, a = infer ctx m (Effects.remove_labels e l) in
+    Mask (l, m), TMod (MRel (l, []), a)
 
   (* B-App *)
   | SApp (m, n) ->

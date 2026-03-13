@@ -71,7 +71,7 @@ type pure_mod
   | MRel of string list * pure_effect list
 
 and pure_effect
-  = { eff_name : string ; eff_type : pure_type * pure_type }
+  = { eff_name : string ; eff_args : pure_type array }
 
 and effect_ctx
   = pure_effect list * (pure_type * string list) option
@@ -86,6 +86,8 @@ and pure_type
   | TForA of kind * (pure_type, pure_type) Bindlib.binder
 
 and tvar = pure_type Bindlib.var
+
+type op = { op_name : string ; op_in : pure_type ; op_out : pure_type }
 
 let tvar_ = Bindlib.box_var
 
@@ -112,11 +114,11 @@ let rec box_type = function
   | ECtx e -> ectx_ (box_effect_ctx e)
 
 and box_effect_ext d =
-  let pure_effect_ eff_name = Bindlib.box_apply2
-      (fun a b -> { eff_name; eff_type = a, b })
+  let pure_effect_ eff_name args = Bindlib.box_apply
+      (fun eff_args -> { eff_name; eff_args }) (Bindlib.box_array args)
   in
-  let box_effect { eff_name; eff_type = (a, b) } =
-    pure_effect_ eff_name (box_type a) (box_type b)
+  let box_effect { eff_name; eff_args } =
+    pure_effect_ eff_name (Array.map box_type eff_args)
   in
   Bindlib.box_list (List.map box_effect d)
 
@@ -132,6 +134,13 @@ and box_mod = function
   | MAbs e -> mabs_ (box_effect_ctx e)
   | MRel (l, d) -> mrel_ l (box_effect_ext d)
 
+let box_ops ops =
+  let op_ op_name =
+    Bindlib.box_apply2 (fun op_in op_out -> { op_name; op_in; op_out }) in
+  List.map (fun {op_name; op_in; op_out} ->
+      op_ op_name (box_type op_in) (box_type op_out)) ops |>
+  Bindlib.box_list
+
 type concrete_mod = pure_mod * effect_ctx
 
 type lit = Int of int | Str of string
@@ -144,7 +153,7 @@ type expr
   | App of expr * expr
   | Let of expr * pure_type * (expr, expr) Bindlib.binder
   | Con of string * expr list
-  | Hand of expr * pure_effect list *
+  | Hand of expr * op list *
             (expr, expr) Bindlib.binder *
             (string * (expr, (expr, expr) Bindlib.binder) Bindlib.binder) list
   | Match of expr * (pat * (expr, expr) Bindlib.mbinder) list

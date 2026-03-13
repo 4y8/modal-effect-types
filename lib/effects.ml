@@ -6,7 +6,7 @@ let rec get_first f = function
   | [] -> None
   | hd :: tl when f hd -> Some (hd, tl)
   | hd :: tl ->
-    Option.map (fun (x, l) -> x, hd :: l) (get_first f tl) 
+    Option.map (fun (x, l) -> x, hd :: l) (get_first f tl)
 
 let find_label_mask lab mask =
   Option.map snd (get_first ((=) lab) mask)
@@ -82,11 +82,11 @@ let eq_eff_var (eps, l) (eps', l') =
 let rec sub_eff d d' =
   match d with
   | [] -> true
-  | {eff_type = a, b; eff_name} :: tl ->
+  | {eff_args; eff_name} :: tl ->
     match find_label_eff eff_name d' with
     | None -> false
-    | Some ({eff_type = a', b'; _}, d') ->
-      eq_ty a a' && eq_ty b b' && sub_eff tl d'
+    | Some ({eff_args = eff_args'; _}, d') ->
+      Array.for_all2 eq_ty eff_args eff_args' && sub_eff tl d'
 
 and eq_ty a b = a == b ||
   match a, b with
@@ -126,19 +126,18 @@ let sub_mod mu nu f = match mu, nu with
     extract (fst f) l1 <> None && extract (fst f) l2 <> None
   | _, _ -> false
 
-let rec get_eff l = function
+let rec get_op l = function
   | [] -> None
-  | {eff_name; eff_type} :: _ when eff_name = l -> Some eff_type
-  | _ :: tl -> get_eff l tl
-
-let get_eff_ctx l (d, _) = get_eff l d
+  | {op_name; op_in; op_out} :: _ when op_name = l -> Some (op_in, op_out)
+  | _ :: tl -> get_op l tl
 
 let rec join_eff_ext d d' = match d with
   | [] -> Some d'
-  | {eff_name; eff_type} as hd :: d ->
+  | {eff_name; eff_args} as hd :: d ->
     match find_label_eff eff_name d' with
     | None -> Option.map (fun e -> hd :: e) (join_eff_ext d d')
-    | Some ({eff_type = t; _}, d') when t = eff_type ->
+    | Some ({eff_args = eff_args'; _}, d') when
+        Array.for_all2 eq_ty eff_args eff_args' ->
       Option.map (fun e -> hd :: e) (join_eff_ext d d')
     | _ -> None
 
@@ -154,10 +153,11 @@ let join_eff_ctx (d, eps) (d', eps') =
 
 let rec meet_eff e e' = match e with
   | [] -> Some []
-  | {eff_name; eff_type} as hd :: e ->
+  | {eff_name; eff_args} as hd :: e ->
     match find_label_eff eff_name e' with
     | None -> meet_eff e e'
-    | Some ({eff_type = t; _}, e') when t = eff_type ->
+    | Some ({eff_args = eff_args'; _}, e') when
+        Array.for_all2 eq_ty eff_args eff_args' ->
       Option.map (fun e -> hd :: e) (meet_eff e e')
     | _ -> None
 
@@ -201,8 +201,8 @@ let subst b e =
     | TMod (MAbs eps, a) -> TMod (MAbs (eff_ctx eps), ty a)
     | ECtx eps -> ECtx (eff_ctx eps)
   and eff_ext d =
-    List.map (fun ({ eff_type = (a, b); _ } as e) ->
-        { e with eff_type = (ty a, ty b) }) d
+    List.map (fun ({ eff_args; _ } as e) ->
+        { e with eff_args = Array.map ty eff_args }) d
 
   and eff_ctx (d, eps) = match eps with
     | Some (ECtx e, l) -> extend (eff_ext d) (remove_labels e l)

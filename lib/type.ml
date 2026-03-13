@@ -104,31 +104,30 @@ and check_mod ctx m = match m.smod with
   | SMRel (l, d) ->
     MRel (check_mask ctx l, check_effect_ext ctx d)
 
-and check_effect ctx {seff_name; seff_args; eloc} args_kind t =
+and check_effect ctx { seff_name; seff_args; eloc } args_kind t =
   if List.length args_kind <> List.length seff_args then
     nb_arg_mismatch eloc seff_name (List.length args_kind) seff_args;
-  let args = List.map2 (check_type_kind ctx) seff_args args_kind
+  let eff_args = List.map2 (check_type_kind ctx) seff_args args_kind
     |> Array.of_list in
-  let ectx = Bindlib.msubst t args in
-  List.iter (fun { eff_type = (a, b); _ } ->
-      if not (is_abs ctx a) then kind_mismatch eloc a Abs Any;
-      if not (is_abs ctx b) then kind_mismatch eloc b Abs Any) ectx;
-  ectx
+  let ectx = Bindlib.msubst t eff_args in
+  List.iter (fun { op_in; op_out; _ } ->
+      if not (is_abs ctx op_in) then kind_mismatch eloc op_in Abs Any;
+      if not (is_abs ctx op_out) then kind_mismatch eloc op_out Abs Any) ectx;
+  { eff_name = seff_name; eff_args }
 
 and check_effect_ext ctx l =
-  List.map (fun ({seff_name; eloc; _} as seff) ->
+  List.map (fun ({ seff_name; eloc; _ } as seff) ->
       match List.assoc_opt seff_name ctx.effects with
       | None -> unknown_eff eloc seff_name
       | Some { eargs ; eops } -> check_effect ctx seff eargs eops) l
-  |> List.flatten
 
 and check_effect_ctx ctx l =
-  List.fold_right (fun ({seff_name; eloc; _} as seff) (d, eps) ->
+  List.fold_right (fun ({ seff_name; eloc; _ } as seff) (d, eps) ->
       match List.assoc_opt seff_name ctx.effects with
       | Some { eargs ; eops } ->
         if not Option.(is_none eps) then
           non_last_evar eloc seff_name;
-        (check_effect ctx seff eargs eops @ d, eps)
+        (check_effect ctx seff eargs eops :: d, eps)
       | None ->
         match List.assoc_opt seff_name ctx.tid with
         | None -> unknown_eff eloc seff_name
@@ -195,6 +194,11 @@ let rec split_pat ctx vars mu t { spat; ploc } =
         (List.combine tcons l) ((ctx, vars), [])
     in res, PCon (c, l)
 
+let unfold_ext ctx d =
+  List.map (fun { eff_name; eff_args } ->
+      let { eops; _ } = List.assoc eff_name ctx.effects in
+      Bindlib.msubst eops eff_args) d |> List.flatten
+
 let join_type loc ctx f t t' =
   let mu, g = get_guarded t in
   let nu, g' = get_guarded t' in
@@ -230,11 +234,12 @@ let rec check ctx ({loc; sexpr} as m) a e =
   | SHand (m, d, (l, (x, n))) ->
     let b = a in (* stay consistent with the paper *)
     let d = check_effect_ext ctx d in
+    let ops = unfold_ext ctx d in
     let m, a = infer (ctx <: Lock (MRel ([], d), e)) m (Effects.extend d e) in
     let ctx', ret = fresh_var ctx x (TMod (MRel ([], d), a)) in
     let n = Bindlib.(check ctx' n b e |> box_expr |> bind_var ret |> unbox) in
     let check_clause (li, (loc, pi, ri, ni)) =
-      match Effects.get_eff li d with
+      match Effects.get_op li ops with
       | None -> unknown_eff loc li
       | Some (ai, bi) ->
         let ctx, pi = fresh_var ctx pi ai in
@@ -242,7 +247,7 @@ let rec check ctx ({loc; sexpr} as m) a e =
         li, Bindlib.(check ctx ni b e |> box_expr |> bind_var ri |> bind_var pi
                   |> unbox)
     in
-    Hand (m, d, n,  List.map check_clause l)
+    Hand (m, ops, n,  List.map check_clause l)
   (* B-CrispSumCheck and B-CrispPairCheck *)
   | SMatch (v, l) ->
     let m, t = infer ctx v e in
@@ -330,7 +335,8 @@ and infer ctx {loc; sexpr} e =
 
   (* B-Do *)
   | SDo (l, m) ->
-    let (a, b) = match Effects.get_eff_ctx l e with
+    let ops = unfold_ext ctx (fst e) in
+    let (a, b) = match Effects.get_op l ops with
       | None -> unknown_eff loc l
       | Some p -> p
     in
@@ -340,12 +346,13 @@ and infer ctx {loc; sexpr} e =
   (* B-HandlerInfer *)
   | SHand (m, d, (l, (x, n))) ->
     let d = check_effect_ext ctx d in
+    let ops = unfold_ext ctx d in
     let m, a = infer (ctx <: Lock (MRel ([], d), e)) m (Effects.extend d e) in
     let ctx', ret = fresh_var ctx x (TMod (MRel ([], d), a)) in
     let n, b' = infer ctx' n e in
     let n = Bindlib.(box_expr n |> bind_var ret |> unbox ) in
     let infer_clause (li, (loc, pi, ri, ni)) =
-      match Effects.get_eff li d with
+      match Effects.get_op li ops with
       | None -> unknown_eff loc li
       | Some (ai, bi) ->
         let ctx, pi = fresh_var ctx pi ai in
@@ -355,7 +362,7 @@ and infer ctx {loc; sexpr} e =
     in
     let h, bi = List.map infer_clause l |> List.split in
     let b = List.fold_left (join_type loc ctx e) b' bi in
-    Hand (m, d, n, h), b
+    Hand (m, ops, n, h), b
   | SInt n -> Lit (Int n), TCon ("int", [||])
   | SStr s -> Lit (Str s), TCon ("string", [||])
 
@@ -406,15 +413,19 @@ let check_decl (ctx, prog) d = match d with
     in
     let _ = check ctx' e g ([], None) in ctx, (x, e) :: prog
   | (x, SDEff (args, l)), _ ->
+    (* add mock definition in the context just for type verification *)
+    let eargs = snd (List.split args) in
     let ctx', mvar = fresh_tvars ctx args in
+    let dummy_ops = Bindlib.(box_list [] |> bind_mvar mvar |> unbox) in
+    let ctx' = { ctx' with effects = (x, { eargs; eops = dummy_ops }) ::
+                                     ctx'.effects } in
     let l =
       List.map (fun (x, (a, b)) ->
-        { eff_name = x; eff_type = check_type ctx' a, check_type ctx' b })
-        l |> box_effect_ext in
+        { op_name = x; op_in = check_type ctx' a; op_out = check_type ctx' b })
+        l |> box_ops in
     { ctx with
-      effects = (x, { eargs = snd (List.split args)
-                    ; eops = Bindlib.(bind_mvar mvar l |> unbox)})
-                :: ctx.effects }, prog
+      effects = (x, { eargs; eops = Bindlib.(bind_mvar mvar l |> unbox)}) ::
+                ctx.effects }, prog
   | (x, SDADT (args, l)), _ ->
     (* add mock definition in the context just for type verification *)
     let targs = snd (List.split args) in

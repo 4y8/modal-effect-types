@@ -6,7 +6,7 @@ type 'a ctx_binding
   | BType of tvar * kind
 
 type eff =
-  { eargs : kind list ; eops : (pure_type, pure_effect list) Bindlib.mbinder }
+  { eargs : kind list ; eops : (pure_type, op list) Bindlib.mbinder }
 
 type adt =
   { targs : kind list ; cons : (string * (pure_type, pure_type list) Bindlib.mbinder) list }

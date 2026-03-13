@@ -88,13 +88,14 @@ let rec sub_eff d d' =
   | {eff_args; eff_name} :: tl ->
     match find_label_eff eff_name d' with
     | None -> false
-    | Some ({eff_args = eff_args'; _}, d') ->
+    | Some ({ eff_args = eff_args'; _ }, d') ->
       Array.for_all2 eq_ty eff_args eff_args' && sub_eff tl d'
 
 and eq_ty a b = a == b ||
   match a, b with
   | TVar v, TVar v' -> Bindlib.eq_vars v v'
-  | TCon (c, l), TCon (c', l') -> c = c' && Array.for_all2 eq_ty l l'
+  | TCon (c, l), TCon (c', l') ->
+    c = c' && Array.for_all2 eq_ty l l'
   | TArr (a, b), TArr (a', b') -> eq_ty a a' && eq_ty b b'
   | TMod (m, a), TMod (m', a') -> eq_mod m m' && eq_ty a a'
   | TForA (k, b), TForA (k', b') -> k = k' && Bindlib.eq_binder eq_ty b b'

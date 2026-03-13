@@ -3,13 +3,14 @@ open Context
 
 let unknown_var loc x = Error.error_str loc ("Unknown variable " ^ x)
 let unknown_eff loc x = Error.error_str loc ("Unknown effect " ^ x)
-let unknown_cons loc c t = Error.error loc (fun fmt -> Format.fprintf fmt
-        "Unknown constructor %s of type %s" c t)
+let unknown_cons loc c t = Error.error loc
+    (fun fmt -> Format.fprintf fmt "Unknown constructor %s of type %s" c t)
 
 let type_mismatch loc _ _ =
   Error.error_str loc "Type mismatch todo"
 
-let expected_arr loc _ = Error.error_str loc "Expected function type todo"
+let expected_arr loc a = Error.error loc
+    (fun fmt -> Format.fprintf fmt "Expected function type %a" Pprint.ty a)
 let expected_prod loc _ = Error.error_str loc "Expected product type todo"
 let expected_cons loc _ =
   Error.error_str loc "Expected algebraic data type todo"
@@ -21,7 +22,9 @@ let mod_mismatch loc _ _ _ = Error.error_str loc "Modality mismatch todo"
 
 let mask_mismatch loc _ _ = Error.error_str loc "Expected type with mask todo"
 
-let kind_mismatch loc _ _ _ = Error.error_str loc "Kind mismatch todo"
+let kind_mismatch loc a k k' = Error.error loc
+    (fun fmt -> Format.fprintf fmt "Kind mismatch: type %a is of kind %a but expected a type of kind %a"
+        Pprint.ty a Pprint.kind k' Pprint.kind k)
 
 let no_access loc _ _ _ = Error.error_str loc "Cannot access variable todo"
 
@@ -60,6 +63,8 @@ let (<<<) k k' =
 
 let is_mod = function TMod _ -> true | _ -> false
 
+let is_modabs = function TMod (MAbs ([], None), _) -> true | _ -> false
+
 let is_forall = function TForA _ -> true | _ -> false
 
 let rec check_type ctx t =
@@ -92,8 +97,8 @@ let rec check_type ctx t =
       TVar v
     | None ->
       match List.assoc_opt x ctx.data with
-      | None -> unknown_var t.tloc x
-      | Some _ -> TCon (x, [||])
+      | Some { targs = []; _ } -> TCon (x, [||])
+      | _ -> unknown_var t.tloc x
 and check_type_kind ctx t k =
   let a = check_type ctx t in
   let k' = get_kind ctx a in
@@ -114,7 +119,8 @@ and check_effect ctx { seff_name; seff_args; eloc } args_kind t =
   let ectx = Bindlib.msubst t eff_args in
   List.iter (fun { op_in; op_out; _ } ->
       if not (is_abs ctx op_in) then kind_mismatch eloc op_in Abs Any;
-      if not (is_abs ctx op_out) then kind_mismatch eloc op_out Abs Any) ectx;
+      if not (is_abs ctx op_out) then kind_mismatch eloc op_out Abs Any;
+    ) ectx;
   { eff_name = seff_name; eff_args }
 
 and check_effect_ext ctx l =
@@ -213,9 +219,9 @@ let join_type loc ctx f t t' =
     | Some lam -> TMod (lam, g)
 
 let rec check ctx ({loc; sexpr} as m) a e =
-  match sexpr with
-  (* B-Mod *)
-  | v when is_val v && is_mod a ->
+  match sexpr, a with
+  (* B-Mod && T-ModAbs *)
+  | v, a when (is_val v && is_mod a) || is_modabs a ->
     begin match a with
       | TMod (mu, a) ->
         check (ctx <: Lock (mu, e)) m a (Effects.apply_mod mu e)
@@ -223,33 +229,26 @@ let rec check ctx ({loc; sexpr} as m) a e =
     end
 
   (* B-Forall *)
-  | v when is_val v && is_forall a ->
-    let k, a = split_forall loc a in
+  | v, TForA (k, a) when is_val v ->
     let v, a = Bindlib.unbind a in
     check (ctx <: BType (v, k)) m a e
 
   (* B-Abs *)
-  | SLam (x, m) ->
+  | SLam (x, m), a ->
     let (a, b) = split_arr loc a in
     let ctx, v = fresh_var ctx x a in
     let m = check ctx m b e in
     Lam (a, Bindlib.(box_expr m |> bind_var v |> unbox))
 
   (* B-MaskCheck *)
-  | SMask (l, m) ->
-    List.iter (fun (l, loc) ->
-        if not List.(assoc_opt l ctx.effects <> None) then
-          unknown_eff loc l) l;
+  | SMask (l, m), TMod (MRel (l', []), a)
+    when Effects.eq_mask (List.split l |> fst) l' ->
     let l, _ = List.split l in
-    let a = match a with
-      | TMod (MRel (l', []), a) when Effects.eq_mask l l' -> a
-      | _ -> mask_mismatch loc l a
-    in
     let m = check ctx m a (Effects.remove_labels e l) in
     Mask (l, m)
 
   (* B-HandlerCheck *)
-  | SHand (m, d, (l, (x, n))) ->
+  | SHand (m, d, (l, (x, n))), a ->
     let b = a in (* stay consistent with the paper *)
     let d = check_effect_ext ctx d in
     let ops = unfold_ext ctx d in
@@ -268,7 +267,7 @@ let rec check ctx ({loc; sexpr} as m) a e =
     Hand (m, ops, n,  List.map check_clause l)
 
   (* B-CrispSumCheck and B-CrispPairCheck *)
-  | SMatch (v, l) ->
+  | SMatch (v, l), a ->
     let m, t = infer ctx v e in
     let l =
       List.map (fun (p, n) ->
@@ -277,12 +276,12 @@ let rec check ctx ({loc; sexpr} as m) a e =
           p, Bindlib.(check ctx n a e |> box_expr |> bind_mvar mvar |> unbox)) l
     in Match (m, l)
 
-  | SSeq (m, n) ->
+  | SSeq (m, n), a ->
     let m = check ctx m (TCon ("unit", [||])) e in
     let dummy = Bindlib.new_var (fun v -> Var v) "unit" in
     Let (m, TCon ("unit", [||]),
          Bindlib.(check ctx n a e |> box_expr |> bind_var dummy |> unbox))
-  | SCons (c, l) ->
+  | SCons (c, l), a ->
     let tc, tl = split_cons loc a in
     let { cons ; _ } = List.assoc tc ctx.data in
     begin
@@ -294,7 +293,7 @@ let rec check ctx ({loc; sexpr} as m) a e =
           nb_arg_mismatch loc c (List.length cargs) l;
         Con (c, List.map2 (fun n b -> check ctx n b e) l cargs)
   end
-  | SLet (x, m, n) ->
+  | SLet (x, m, n), a ->
     let m, t = infer ctx m e in
     let ctx, v = fresh_var ctx x t in
     Let (m, t, Bindlib.(check ctx n a e |> box_expr |> bind_var v |> unbox))
@@ -421,7 +420,6 @@ and infer ctx {loc; sexpr} e =
     let n, b = infer ctx n e in
     Let (m, a, Bindlib.(n |> box_expr |> bind_var v |> unbox)), b
   | _ ->
-    print_endline (show_surface_desc sexpr);
     failwith "todo"
 
 let check_decl (ctx, prog) d = match d with

@@ -38,7 +38,11 @@ let rec get_kind ?(seen_adt=[]) ctx = function
   | TCon (s, _) when List.mem s seen_adt -> Abs
   | TCon (s, arr) ->
     let seen_adt = s :: seen_adt in
-    if Array.for_all (fun a -> get_kind ~seen_adt ctx a = Abs) arr then
+    let {cons; _} = List.assoc s ctx.data in
+    let types = List.map (fun (_, b) -> Bindlib.msubst b arr) cons |>
+      List.flatten in
+    if List.for_all (fun a ->
+        get_kind ~seen_adt ctx a = Abs) types then
       Abs
     else
       Any

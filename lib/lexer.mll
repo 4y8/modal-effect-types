@@ -7,7 +7,7 @@
 
   let _ = List.iter (fun (k, v) -> Hashtbl.add ident_tbl k v)
     ["handle", HANDLE; "do", DO; "with", WITH; "return", RETURN;
-     "eff", EFFECT; "fun", FUN; "type", TYPE; "if", IF; "then", THEN;
+     "eff", EFF; "fun", FUN; "type", TYPE; "if", IF; "then", THEN;
      "else", ELSE; "forall", FORALL; "match", MATCH; "_", WILDCARD; "of", OF;
      "mask", MASK; "let", LET; "in", IN; "end", END; "val", VAL]
 }
@@ -28,6 +28,7 @@ rule lexer = parse
   | ident as s
     { match Hashtbl.find_opt ident_tbl s with
       | None -> IDENT s | Some t -> t }
+  | "Effect" { EFFECT }
   | mident as s { MIDENT s }
   | ('-'? ('0' | ['1'-'9'] digit*)) as s { INT (int_of_string s) }
   | '<' { LANGLE }

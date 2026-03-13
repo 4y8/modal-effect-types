@@ -125,18 +125,18 @@ and check_effect_ctx ctx l =
   List.fold_right (fun ({ seff_name; eloc; _ } as seff) (d, eps) ->
       match List.assoc_opt seff_name ctx.effects with
       | Some { eargs ; eops } ->
-        if not Option.(is_none eps) then
-          non_last_evar eloc seff_name;
-        (check_effect ctx seff eargs eops :: d, eps)
+        check_effect ctx seff eargs eops :: d, eps
       | None ->
         match List.assoc_opt seff_name ctx.tid with
         | None -> unknown_eff eloc seff_name
         | Some v ->
           if get_var_kind ctx.gamma v <> Effect then
             kind_mismatch eloc (TVar v) Effect (get_var_kind ctx.gamma v);
-          match eps with
-          | None -> d, Some (TVar v, [])
-          | Some _ -> two_effect_var eloc)
+          if not List.(is_empty d) then
+            non_last_evar eloc seff_name;
+          if Option.is_some eps then
+            two_effect_var eloc;
+          [], Some (TVar v, []))
     l ([], None)
 
 and check_mask ctx = function

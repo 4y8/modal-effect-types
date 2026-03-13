@@ -36,8 +36,8 @@ let spair (a, b) = SCons ("Pair", [a; b])
 %token <string> MIDENT
 %token <string> STRING
 %token <int> INT
-%token HANDLE DO WITH RETURN EFFECT FUN TYPE IF THEN ELSE FORALL MATCH MASK LET
-%token IN END VAL OF
+%token HANDLE DO WITH RETURN EFF FUN TYPE IF THEN ELSE FORALL MATCH MASK LET
+%token IN END VAL OF EFFECT
 %token PLUS MINUS TIMES AND CARET
 %token LANGLE RANGLE LSQUARE RSQUARE LCURLY RCURLY LPAR RPAR
 %token COMMA PIPE ARROW DARROW DOT DCOL EQU WILDCARD AT SCOL
@@ -99,6 +99,7 @@ by the programmer as it can be infered *)
 
 let targ :=
   | LSQUARE; x = IDENT; RSQUARE; { (x, Abs) }
+  | LPAR; x = IDENT; DCOL; EFFECT; RPAR; { (x, Effect) }
   | x = IDENT; { (x, Any) }
 
 let targ_loc :=
@@ -202,7 +203,7 @@ eff:
 ;
 
 decl_eff:
-  | EFFECT x = IDENT args = targ* EQU l = separated_list(PIPE, eff)
+  | EFF x = IDENT args = targ* EQU l = separated_list(PIPE, eff)
     { x, SDEff (args, l) }
 ;
 

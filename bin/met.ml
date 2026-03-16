@@ -7,6 +7,7 @@ let eval = ref false
 let read_file f =
   let ic = open_in f in
   let lb = Lexing.from_channel ic in
+  Lexing.set_filename lb f;
   let p =
       try
         Core.Parser.file Core.Lexer.lexer lb

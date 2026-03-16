@@ -114,20 +114,20 @@ let rec check ctx m s e = match m, s with
     let mu, a = split_var a in
     let nu, f = locks e gamma' in
     if not (Effects.sub_mod mu nu f) && not (is_abs ctx a) then
-      Type.no_access None (Bindlib.name_of v) v ctx e;
+      Errors.no_access None (Bindlib.name_of v) v ctx e;
     a
 
   (* T-Mod *)
   | Mod (mu, v), s ->
     if not (is_val v) then
-      Type.expected_val None v;
+      Errors.expected_val None v;
     check (ctx <: Lock (mu, e)) m (shape_map (check_mod mu) s)
       (Effects.apply_mod mu e)
 
   (* T-Letmod *)
   | LetMod (mu, nu, v, m), s ->
     if not (is_val v) then
-      Type.expected_val None v;
+      Errors.expected_val None v;
     let a = check_mod mu (check (ctx <: Lock (nu, e)) v Hole
                             (Effects.apply_mod nu e)) in
     let x, m = Bindlib.unbind m in
@@ -153,14 +153,14 @@ let rec check ctx m s e = match m, s with
     let a = check ctx m Hole e in
     let k, a = Type.split_forall None a in
     if k = Abs && not (is_abs ctx b) then
-      Type.kind_mismatch None b Syntax.Abs Syntax.Any;
+      Errors.kind_mismatch None b Syntax.Abs Syntax.Any;
     Bindlib.subst a b
 
   (* Switch *)
   | _, Check a ->
     let a' = check ctx m Hole e in
     if not Effects.(eq_ty a' a) then
-      Type.type_mismatch None a' a;
+      Errors.type_mismatch None a' a;
     a
 
   | _, _ -> failwith "todo"

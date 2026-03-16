@@ -85,7 +85,8 @@ let rec eval ctx env {sexpr; _} = match sexpr with
         failwith "missing case"
       | Some (env, n) -> eval ctx env n
     end
-  | SHand (m, _, _, (h, (r, n))) ->
+  | SHand (m, _, _, ht, (h, (r, n))) ->
+    let handled = ref [] in
     try
       let v = eval ctx env m in
       eval ctx ((r, v) :: env) n
@@ -94,7 +95,10 @@ let rec eval ctx env {sexpr; _} = match sexpr with
       match List.assoc_opt e h, v with
       | Some _, VMask v
       | None, v -> continue k (perform (Do (e, v)))
+      | Some _, v when ht = Shallow && List.mem e !handled ->
+        continue k (perform (Do (e, v)))
       | Some (_, pi, ri, ni), _ ->
+        handled := e :: !handled;
         eval ctx ((pi, v) :: (ri, VClo (continue k)) :: env) ni
 
 and eval_pat env v {spat; _} = match spat with

@@ -9,7 +9,7 @@ let kind fmt = function
 let rec ty_fora ctx fmt = function
   | TForA (k, a) ->
     let v, a, ctx = Bindlib.unbind_in ctx a in
-    fprintf fmt "∀ %s : %a .@ @[<2>%a@]" (Bindlib.name_of v) kind k
+    fprintf fmt "∀ %s : %a .@ %a" (Bindlib.name_of v) kind k
       (ty_fora ctx) a
   | a -> ty_arrow ctx fmt a
 and ty_arrow ctx fmt = function
@@ -18,7 +18,7 @@ and ty_arrow ctx fmt = function
   | a -> ty_app ctx fmt a
 
 and ty_app ctx fmt = function
-  | TCon (c, arr) ->
+  | TCon (c, arr) when Array.length arr > 0 ->
     fprintf fmt "%s %a" c (pp_print_array (ty_atom ctx)) arr
   | a -> ty_atom ctx fmt a
 and ty_atom ctx fmt = function
@@ -29,7 +29,7 @@ and ty_atom ctx fmt = function
   | TMod (mu, a) ->
     fprintf fmt "%a %a" (modality ctx) mu (ty_atom ctx) a
   | ECtx e -> fprintf fmt "[%a]" (eff_ctx ctx) e
-  | a -> fprintf fmt "(@[%a@])" (ty_fora ctx) a
+  | a -> fprintf fmt "(%a)" (ty_fora ctx) a
 
 and eff ctx fmt {eff_name; eff_args} =
   fprintf fmt "%s %a" eff_name (pp_print_array (ty_atom ctx)) eff_args
@@ -43,9 +43,9 @@ and eff_ctx ctx fmt (d, eps) =
                         (fun fmt -> fprintf fmt "%s")) l
 
 and modality ctx fmt = function
-  | MAbs e -> fprintf fmt "[@[%a@]]" (eff_ctx ctx) e
+  | MAbs e -> fprintf fmt "[%a]" (eff_ctx ctx) e
   | MRel (l, r) ->
-    fprintf fmt "<@[%a|%a@]>"
+    fprintf fmt "<%a|%a>"
       (pp_print_list ~pp_sep:(fun fmt () -> fprintf fmt ",@ ")
          (fun fmt -> fprintf fmt "%s"))
       l (eff_ext ctx) r

@@ -1,65 +1,6 @@
 open Syntax
 open Context
-
-let unknown_var loc x = Error.error_str loc ("Unknown variable " ^ x)
-let unknown_eff loc x = Error.error_str loc ("Unknown effect " ^ x)
-let unknown_cons loc c t = Error.error loc
-    (fun fmt -> Format.fprintf fmt "Unknown constructor %s of type %s" c t)
-
-let type_mismatch loc a b = Error.error loc
-    (fun fmt -> Format.fprintf fmt "Type mismatch: expected %a got %a" Pprint.ty b Pprint.ty a)
-
-let expected_arr loc a = Error.error loc
-    (fun fmt -> Format.fprintf fmt "Expected function type %a" Pprint.ty a)
-let expected_prod loc _ = Error.error_str loc "Expected product type todo"
-let expected_cons loc _ =
-  Error.error_str loc "Expected algebraic data type todo"
-let expected_forall loc _ =
-  Error.error_str loc "Expected forall type for type application todo"
-let expected_val loc _ = Error.error_str loc "Expected a value todo"
-
-let mod_mismatch loc mu nu e = Error.error loc
-    (fun fmt -> Format.fprintf fmt "Modality mismatch: expected %a got %a at context %a"
-        Pprint.mu nu Pprint.mu mu Pprint.ectx e)
-
-let mask_mismatch loc _ _ = Error.error_str loc "Expected type with mask todo"
-
-let kind_mismatch loc a k k' = Error.error loc
-    (fun fmt -> Format.fprintf fmt
-        "Kind mismatch: type %a is of kind %a but expected a type of kind %a"
-        Pprint.ty a Pprint.kind k' Pprint.kind k)
-
-let no_access loc x v ctx e =
-  let _, a, _ = Context.get_type_context ctx.gamma v in
-  Error.error loc
-    (fun fmt -> Format.fprintf fmt
-        "Cannot access variable %s of type %a in effect context %a"
-        x Pprint.ty a Pprint.ectx e)
-
-let no_unboxing loc mu e =
-  Error.error loc
-    (fun fmt -> Format.fprintf fmt
-        "Cannot unbox function with modality %a in effect context %a"
-        Pprint.mu mu Pprint.ectx e)
-
-let missing_declaration loc x =
-  Error.error_str loc ("Missing declaration for function " ^ x)
-
-let two_effect_var loc =
-  Error.error_str loc "Cannot have two effect variables in a single row"
-
-let not_cons loc c _ = Error.error loc
-    (fun fmt -> Format.fprintf fmt
-        "Constructor %s is not of the good type" c)
-
-let nb_arg_mismatch loc e n l = Error.error loc
-    (fun fmt -> Format.fprintf fmt
-        "Wrong number of arguments for %s, expected %d, got %d"
-        e n (List.length l))
-
-let non_last_evar loc e = Error.error loc
-    (fun fmt -> Format.fprintf fmt
-        "Effect type variable %s should be at the end of the row" e)
+open Errors
 
 let rec is_val = function
   | SVar _ -> true
@@ -247,11 +188,13 @@ let rec check ctx ({loc; sexpr} as m) a e =
     check (ctx <: BType (v, k)) m a e
 
   (* B-Abs *)
-  | SLam (x, m), a ->
-    let (a, b) = split_arr loc a in
+  | SLam (x, m), TArr (a, b) ->
     let ctx, v = fresh_var ctx x a in
     let m = check ctx m b e in
     Lam (a, Bindlib.(box_expr m |> bind_var v |> unbox))
+
+  | SLam (_, _), a ->
+    function_non_arr loc a
 
   (* B-MaskCheck *)
   | SMask (l, m), TMod (MRel (l', []), a)
@@ -261,7 +204,7 @@ let rec check ctx ({loc; sexpr} as m) a e =
     Mask (l, m)
 
   (* B-HandlerCheck *)
-  | SHand (m, d, mu, (l, (x, n))), a ->
+  | SHand (m, d, mu, Deep, (l, (x, n))), a ->
     let b = a in (* stay consistent with the paper *)
     let f = e in
     let mu = List.map (check_mod ctx) mu |> List.fold_left Effects.compose Effects.id in
@@ -283,7 +226,31 @@ let rec check ctx ({loc; sexpr} as m) a e =
         li, Bindlib.(check ctx ni b e |> box_expr |> bind_var ri |> bind_var pi
                   |> unbox)
     in
-    Hand (m, ops, n,  List.map check_clause l)
+    Hand (m, ops, Deep, n, List.map check_clause l)
+
+  (* B-HandlerCheck *)
+  | SHand (m, d, mu, Shallow, (l, (x, n))), a ->
+    let b = a in (* stay consistent with the paper *)
+    let f = e in
+    let mu = List.map (check_mod ctx) mu |> List.fold_left Effects.compose Effects.id in
+    let e = Effects.apply_mod mu f in
+    let d = check_effect_ext ctx d in
+    let ops = unfold_ext ctx d in
+    let nu = Effects.compose mu (MRel ([], d)) in
+    let m, a = infer (ctx <: Lock (nu, e)) m
+        (Effects.extend d e) in
+    let ctx', ret = fresh_var ctx x (TMod (nu, a)) in
+    let n = Bindlib.(check ctx' n b f |> box_expr |> bind_var ret |> unbox) in
+    let check_clause (li, (loc, pi, ri, ni)) =
+      match Effects.get_op li ops with
+      | None -> unknown_eff loc li
+      | Some (ai, bi) ->
+        let ctx, pi = fresh_var ctx pi ai in
+        let ctx, ri = fresh_var ctx ri (TMod (nu, TArr (bi, a))) in
+        li, Bindlib.(check ctx ni b f |> box_expr |> bind_var ri |> bind_var pi
+                  |> unbox)
+    in
+    Hand (m, ops, Shallow, n, List.map check_clause l)
 
   (* B-CrispSumCheck and B-CrispPairCheck *)
   | SMatch (v, l), a ->
@@ -305,7 +272,7 @@ let rec check ctx ({loc; sexpr} as m) a e =
     let { cons ; _ } = List.assoc tc ctx.data in
     begin
       match List.assoc_opt c cons with
-      | None -> unknown_cons loc c tc
+      | None -> unknown_cons loc c (Some tc)
       | Some cargs ->
         let cargs = Bindlib.msubst cargs tl in
         if List.length cargs <> List.length l then
@@ -353,7 +320,6 @@ and infer ctx {loc; sexpr} e =
         if not List.(assoc_opt l ctx.effects <> None) then
           unknown_eff loc l) l;
     let l, _ = List.split l in
-
     let m, a = infer ctx m (Effects.remove_labels e l) in
     Mask (l, m), TMod (MRel (l, []), a)
 
@@ -361,7 +327,10 @@ and infer ctx {loc; sexpr} e =
   | SApp (m, n) ->
     let m, a = infer ctx m e in
     let mu, g = get_guarded a in
-    let a, b = split_arr loc g in
+    let a, b = match g with
+      | TArr (a, b) -> a, b
+      | a -> apply_non_arr loc a
+    in
     if not Effects.(sub_mod mu id e) then
       no_unboxing loc mu e;
     let n = check ctx n a e in
@@ -392,7 +361,7 @@ and infer ctx {loc; sexpr} e =
     Do (l, m), b
 
   (* B-HandlerInfer *)
-  | SHand (m, d, mu, (l, (x, n))) ->
+  | SHand (m, d, mu, Deep, (l, (x, n))) ->
     let d = check_effect_ext ctx d in
     let f = e in
     let mu = List.fold_right Effects.compose (List.map (check_mod ctx) mu) Effects.id in
@@ -414,7 +383,7 @@ and infer ctx {loc; sexpr} e =
     in
     let h, bi = List.map infer_clause l |> List.split in
     let b = List.fold_left (join_type loc ctx e) b' bi in
-    Hand (m, ops, n, h), b
+    Hand (m, ops, Deep, n, h), b
   | SInt n -> Lit (Int n), TCon ("int", [||])
   | SStr s -> Lit (Str s), TCon ("string", [||])
 

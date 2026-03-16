@@ -15,13 +15,16 @@ let find_label_eff lab =
   get_first (fun {eff_name; _} -> eff_name = lab)
 
 let rec remove_labels_ext d l = match d with
-  | [] -> []
+  | [] -> ([], l)
   | hd :: tl -> match find_label_mask hd.eff_name l with
-    | None -> hd :: remove_labels_ext tl l
+    | None ->
+      let tl, l = remove_labels_ext tl l in
+      hd :: tl, l
     | Some l -> remove_labels_ext tl l
 
 let remove_labels (d, eps) l =
-  remove_labels_ext d l,
+  let d, l = remove_labels_ext d l in
+  d,
   match eps with
   | None -> None
   | Some (eps, l') -> Some (eps, l @ l')
@@ -65,14 +68,12 @@ let rec extract d l = match d with
 
 (* Appendix D.1 *)
 let right_residual m m' f =
-
-  Format.printf "rr : %a %a %a@." Pprint.ectx f Pprint.mu m Pprint.mu m';
   match m, m' with
   | _, MAbs _ -> Some m'
   | MAbs _, _ -> None
   | MRel (l', d'), MRel (l, d) ->
     match extract (fst f) (mask_diff l' l) with
-    | None -> print_endline "rrkjhkhkjlk"; None
+    | None -> None
     | Some f ->
       Some (MRel (erase_types d' @ (mask_diff l l'), d @ f))
 

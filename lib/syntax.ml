@@ -42,7 +42,8 @@ type surface_desc
   | SLet of string * surface_expr * surface_expr
   | SAppT of surface_expr * surface_type
   | SMask of (string * loc) list * surface_expr
-  | SHand of surface_expr * surface_effect list * surface_handler
+  | SHand of surface_expr * surface_effect list * surface_mod list *
+             surface_handler
   | SCons of string * surface_expr list
   | SMatch of surface_expr * (surface_pat * surface_expr) list
 and surface_expr = { sexpr : surface_desc ; loc : loc }

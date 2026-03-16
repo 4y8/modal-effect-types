@@ -41,6 +41,7 @@ let stdlib =
   ; "&&", VClo (fun x -> VClo (fun y -> vbool (unbool x && unbool y)))
   ; "fail", VClo (fun _ -> raise Fail)
   ; "print", VClo (fun x -> print_endline (unstr x); VCon ("Unit", []))
+  ; "string_of_int", VClo (fun x -> VStr (string_of_int (unint x)))
   ]
 
 let rec eval ctx env {sexpr; _} = match sexpr with
@@ -78,10 +79,13 @@ let rec eval ctx env {sexpr; _} = match sexpr with
     let v = eval ctx env m in
       begin match List.find_map (fun (p, n) -> Option.map (fun env -> env, n)
                                     (eval_pat env v p)) l with
-      | None -> failwith "missing case"
+      | None ->
+    print_endline (show_surface_expr m);
+    print_endline (show_value v);
+        failwith "missing case"
       | Some (env, n) -> eval ctx env n
     end
-  | SHand (m, _, (h, (r, n))) ->
+  | SHand (m, _, _, (h, (r, n))) ->
     try
       let v = eval ctx env m in
       eval ctx ((r, v) :: env) n

@@ -64,20 +64,22 @@ let rec extract d l = match d with
     | Some l -> Option.map (fun e -> hd :: e) (extract tl l)
 
 (* Appendix D.1 *)
-let right_residual m m' f = match m, m' with
+let right_residual m m' f =
+
+  Format.printf "rr : %a %a %a@." Pprint.ectx f Pprint.mu m Pprint.mu m';
+  match m, m' with
   | _, MAbs _ -> Some m'
   | MAbs _, _ -> None
   | MRel (l', d'), MRel (l, d) ->
     match extract (fst f) (mask_diff l' l) with
-    | None -> None
+    | None -> print_endline "rrkjhkhkjlk"; None
     | Some f ->
       Some (MRel (erase_types d' @ (mask_diff l l'), d @ f))
 
 let eq_mask l l' =
   List.sort compare l = List.sort compare l'
 
-let eq_eff_var (eps, l) (eps', l') =
-  match eps, eps' with
+let eq_eff_var (eps, l) (eps', l') = match eps, eps' with
   | TVar v, TVar v' ->
     Bindlib.eq_vars v v' && eq_mask l l'
   | _ -> failwith "impossible"
@@ -99,10 +101,12 @@ and eq_ty a b = a == b ||
   | TArr (a, b), TArr (a', b') -> eq_ty a a' && eq_ty b b'
   | TMod (m, a), TMod (m', a') -> eq_mod m m' && eq_ty a a'
   | TForA (k, b), TForA (k', b') -> k = k' && Bindlib.eq_binder eq_ty b b'
+  | ECtx (d, None), ECtx (d', None) -> d === d'
+  | ECtx (d, Some eps), ECtx (d', Some eps') ->
+    eq_eff_var eps eps' && d === d'
   | _, _ -> false
 
-and eq_mod m m' =
-  match m, m' with
+and eq_mod m m' = match m, m' with
   | MAbs (e, None), MAbs (e', None) -> e === e'
   | MAbs (e, Some eps), MAbs (e', Some eps') ->
     eq_eff_var eps eps' && e === e'
@@ -115,7 +119,7 @@ let sub_eff_ctx (d, eps) (d', eps') =
   sub_eff d d' &&
   match eps, eps' with
   | None, _ -> true
-  | Some eps, Some eps' -> eq_eff_var eps eps'
+  | Some eps, Some eps' -> sub_eff d' d && eq_eff_var eps eps'
   | _, _ -> false
 
 (* from wenhao's implementation : mu => nu @ f *)
@@ -192,7 +196,7 @@ let join_mod m m' f = match m, m' with
       else None
 
 let subst b e =
-  let a = Bindlib.subst b (TMod (MAbs e, TCon ("", [||]))) in
+  let a = Bindlib.subst b (ECtx e) in
   let rec ty = function
     | TVar a -> TVar a
     | TCon (s, a) -> TCon (s, Array.map ty a)
@@ -202,7 +206,10 @@ let subst b e =
     | TArr (a, b) -> TArr (ty a, ty b)
     | TMod (MRel (l, d), a) -> TMod (MRel (l, eff_ext d), ty a)
     | TMod (MAbs eps, a) -> TMod (MAbs (eff_ctx eps), ty a)
-    | ECtx eps -> ECtx (eff_ctx eps)
+    | ECtx eps ->
+      match eff_ctx eps with
+      | ([], Some (a, [])) -> a
+      | e -> ECtx e
   and eff_ext d =
     List.map (fun ({ eff_args; _ } as e) ->
         { e with eff_args = Array.map ty eff_args }) d
@@ -212,3 +219,25 @@ let subst b e =
     | eps -> eff_ext d, eps
   in
   ty a
+
+let rec norm_ty = function
+  | TVar a -> TVar a
+  | TCon (s, a) -> TCon (s, Array.map norm_ty a)
+  | TForA (k, b) ->
+    let v, a = Bindlib.unbind b in
+    Bindlib.(bind_var v (box_type (norm_ty a)) |> tfora_ k |> unbox)
+  | TArr (a, b) -> TArr (norm_ty a, norm_ty b)
+  | TMod (MRel (l, d), a) -> TMod (MRel (l, norm_eff_ext d), norm_ty a)
+  | TMod (MAbs eps, a) ->
+    TMod (MAbs (norm_eff_ctx eps), norm_ty a)
+  | ECtx eps ->
+    match norm_eff_ctx eps with
+    | ([], Some (a, [])) -> a
+    | e -> ECtx e
+and norm_eff_ext d =
+  List.map (fun ({ eff_args; _ } as e) ->
+      { e with eff_args = Array.map norm_ty eff_args }) d
+and norm_eff_ctx (d, eps) = match eps with
+  | Some (ECtx e, l) ->
+    norm_eff_ctx (extend (norm_eff_ext d) (remove_labels e l))
+  | eps -> norm_eff_ext d, eps

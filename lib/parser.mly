@@ -27,6 +27,8 @@ let wrap_let_pat (p, m, n) =
   let x = fresh_name () in
   SLet (x, m, { sexpr = SMatch ({sexpr = SVar x; loc = p.ploc}, [p, n]) ; loc = p.ploc})
 
+let mask_of_seffs = List.map (function { seff_name ; eloc ; seff_args = [] } -> (seff_name, eloc) | _ -> raise Not_found )
+
 let stprod (a, b) = STCons ("pair", [a; b])
 let spair (a, b) = SCons ("Pair", [a; b])
 %}
@@ -68,8 +70,16 @@ let loc_type(t) ==
 let smod :=
   | LSQUARE; l = separated_list(COMMA, seff); RSQUARE;
     { { smod = SMAbs l; mloc = Some ($startpos, $endpos) } }
-  | LANGLE; l = separated_list(COMMA, seff); RANGLE;
-    { { smod = SMRel ([], l); mloc = Some ($startpos, $endpos) } }
+  | LANGLE; d = separated_list(COMMA, seff); RANGLE;
+    { { smod = SMRel ([], d); mloc = Some ($startpos, $endpos) } }
+  | LANGLE; l = separated_list(COMMA, seff); PIPE; d = separated_list(COMMA, seff); RANGLE;
+    { let l = mask_of_seffs l in
+      { smod = SMRel (l, d); mloc = Some ($startpos, $endpos) } }
+(*
+let mod_id :=
+  | ~ = smod; <>
+  | { { smod = SMRel ([], []); mloc = Some ($startpos, $endpos) } }
+*)
 
 let atom_type :=
   | LPAR; ~ = stype; RPAR; <>
@@ -147,10 +157,10 @@ let atom_expr :=
    | MASK; LANGLE; ~ = separated_list(COMMA, string_loc); RANGLE; ~ = atom_expr;
      <SMask>
    | UNIT; { SCons ("Unit", []) }
-   | HANDLE; LANGLE; d = separated_list (COMMA, seff); RANGLE; m = sexpr; WITH;
+   | HANDLE; LANGLE; d = separated_list (COMMA, seff); RANGLE; mu = smod*; m = sexpr; WITH;
      PIPE; RETURN; p = arg; DARROW; n = sexpr;
      h = handle_clause*;
-     END; { SHand (m, d, (h, (p, n))) }
+     END; { SHand (m, d, mu, (h, (p, n))) }
    | MATCH; ~ = sexpr; WITH; ~ = match_clause*; END; <SMatch>)
 
 let single_cons := loc_expr (| c = MIDENT; { SCons (c, []) })
@@ -202,7 +212,7 @@ let sexpr :=
     | LET; p = pattern_list; DCOL; t = stype; EQU; m = sexpr; IN; n = sexpr;
     { wrap_let_pat (p, wrap_ann m t, n) }
     | LET; p = pattern_list; EQU; m = sexpr; IN; n = sexpr; <wrap_let_pat>
-    | FUN; ~ = IDENT; ARROW; ~ = sexpr; <SLam>)
+    | FUN; ~ = arg; ARROW; ~ = sexpr; <SLam>)
 
 eff:
   | x = IDENT DCOL tin = stype DARROW tout = stype { x, (tin, tout) }

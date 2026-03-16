@@ -6,8 +6,8 @@ let unknown_eff loc x = Error.error_str loc ("Unknown effect " ^ x)
 let unknown_cons loc c t = Error.error loc
     (fun fmt -> Format.fprintf fmt "Unknown constructor %s of type %s" c t)
 
-let type_mismatch loc _ _ =
-  Error.error_str loc "Type mismatch todo"
+let type_mismatch loc a b = Error.error loc
+    (fun fmt -> Format.fprintf fmt "Type mismatch: expected %a got %a" Pprint.ty b Pprint.ty a)
 
 let expected_arr loc a = Error.error loc
     (fun fmt -> Format.fprintf fmt "Expected function type %a" Pprint.ty a)
@@ -18,18 +18,29 @@ let expected_forall loc _ =
   Error.error_str loc "Expected forall type for type application todo"
 let expected_val loc _ = Error.error_str loc "Expected a value todo"
 
-let mod_mismatch loc _ _ _ = Error.error_str loc "Modality mismatch todo"
+let mod_mismatch loc mu nu e = Error.error loc
+    (fun fmt -> Format.fprintf fmt "Modality mismatch: expected %a got %a at context %a"
+        Pprint.mu nu Pprint.mu mu Pprint.ectx e)
 
 let mask_mismatch loc _ _ = Error.error_str loc "Expected type with mask todo"
 
 let kind_mismatch loc a k k' = Error.error loc
-    (fun fmt -> Format.fprintf fmt "Kind mismatch: type %a is of kind %a but expected a type of kind %a"
+    (fun fmt -> Format.fprintf fmt
+        "Kind mismatch: type %a is of kind %a but expected a type of kind %a"
         Pprint.ty a Pprint.kind k' Pprint.kind k)
 
-let no_access loc _ _ _ = Error.error_str loc "Cannot access variable todo"
+let no_access loc x v ctx e =
+  let _, a, _ = Context.get_type_context ctx.gamma v in
+  Error.error loc
+    (fun fmt -> Format.fprintf fmt
+        "Cannot access variable %s of type %a in effect context %a"
+        x Pprint.ty a Pprint.ectx e)
 
-let no_unboxing loc _ _ =
-  Error.error_str loc "Cannot unbox function in application todo"
+let no_unboxing loc mu e =
+  Error.error loc
+    (fun fmt -> Format.fprintf fmt
+        "Cannot unbox function with modality %a in effect context %a"
+        Pprint.mu mu Pprint.ectx e)
 
 let missing_declaration loc x =
   Error.error_str loc ("Missing declaration for function " ^ x)
@@ -205,7 +216,9 @@ let rec split_pat ctx vars mu t { spat; ploc } =
 let unfold_ext ctx d =
   List.map (fun { eff_name; eff_args } ->
       let { eops; _ } = List.assoc eff_name ctx.effects in
-      Bindlib.msubst eops eff_args) d |> List.flatten
+      Bindlib.msubst eops eff_args) d |> List.flatten |>
+  List.map (fun { op_name; op_in; op_out } ->
+      { op_name ; op_in = Effects.norm_ty op_in ; op_out = Effects.norm_ty op_out })
 
 let join_type loc ctx f t t' =
   let mu, g = get_guarded t in
@@ -215,7 +228,7 @@ let join_type loc ctx f t t' =
   if is_abs ctx g then
     g
   else match Effects.join_mod mu nu f with
-    | None -> mod_mismatch loc mu nu g
+    | None -> mod_mismatch loc mu nu f
     | Some lam -> TMod (lam, g)
 
 let rec check ctx ({loc; sexpr} as m) a e =
@@ -248,19 +261,25 @@ let rec check ctx ({loc; sexpr} as m) a e =
     Mask (l, m)
 
   (* B-HandlerCheck *)
-  | SHand (m, d, (l, (x, n))), a ->
+  | SHand (m, d, mu, (l, (x, n))), a ->
     let b = a in (* stay consistent with the paper *)
+    let f = e in
+    let mu = List.map (check_mod ctx) mu |> List.fold_left Effects.compose Effects.id in
+    let e = Effects.apply_mod mu f in
     let d = check_effect_ext ctx d in
     let ops = unfold_ext ctx d in
-    let m, a = infer (ctx <: Lock (MRel ([], d), e)) m (Effects.extend d e) in
-    let ctx', ret = fresh_var ctx x (TMod (MRel ([], d), a)) in
+    let nu = MRel ([], d) in
+    let ctx = ctx <: Lock (mu, f) in
+    let m, a = infer (ctx <: Lock (nu, e)) m
+        (Effects.extend d e) in
+    let ctx', ret = fresh_var ctx x (TMod (Effects.compose mu nu, a)) in
     let n = Bindlib.(check ctx' n b e |> box_expr |> bind_var ret |> unbox) in
     let check_clause (li, (loc, pi, ri, ni)) =
       match Effects.get_op li ops with
       | None -> unknown_eff loc li
       | Some (ai, bi) ->
         let ctx, pi = fresh_var ctx pi ai in
-        let ctx, ri = fresh_var ctx ri (TArr (bi, b)) in
+        let ctx, ri = fresh_var ctx ri (TMod (mu, TArr (bi, b))) in
         li, Bindlib.(check ctx ni b e |> box_expr |> bind_var ri |> bind_var pi
                   |> unbox)
     in
@@ -305,7 +324,7 @@ let rec check ctx ({loc; sexpr} as m) a e =
     if not Effects.(eq_ty g g') then type_mismatch loc g g'
     else
       if not (Effects.sub_mod mu nu e) && not (is_abs ctx g) then
-        mod_mismatch loc mu nu g
+        mod_mismatch loc mu nu e
       else
         m
 
@@ -319,7 +338,7 @@ and infer ctx {loc; sexpr} e =
         let _, a, gamma' = get_type_context ctx.gamma v in
         let nu, f = locks e gamma' in
         match across ctx a nu f with
-        | None -> no_access loc x ctx e
+        | None -> no_access loc x v ctx e
         | Some t -> Var v, t
     end
   (* B-Annotation *)
@@ -373,19 +392,23 @@ and infer ctx {loc; sexpr} e =
     Do (l, m), b
 
   (* B-HandlerInfer *)
-  | SHand (m, d, (l, (x, n))) ->
+  | SHand (m, d, mu, (l, (x, n))) ->
     let d = check_effect_ext ctx d in
+    let f = e in
+    let mu = List.fold_right Effects.compose (List.map (check_mod ctx) mu) Effects.id in
+    let nu = MRel ([], d) in
+    let e = Effects.apply_mod mu f in
     let ops = unfold_ext ctx d in
-    let m, a = infer (ctx <: Lock (MRel ([], d), e)) m (Effects.extend d e) in
-    let ctx', ret = fresh_var ctx x (TMod (MRel ([], d), a)) in
+    let m, a = infer (ctx <: Lock (nu, e)) m (Effects.extend d e) in
+    let ctx', ret = fresh_var ctx x (TMod (Effects.compose mu nu, a)) in
     let n, b' = infer ctx' n e in
-    let n = Bindlib.(box_expr n |> bind_var ret |> unbox ) in
+    let n = Bindlib.(box_expr n |> bind_var ret |> unbox) in
     let infer_clause (li, (loc, pi, ri, ni)) =
       match Effects.get_op li ops with
       | None -> unknown_eff loc li
       | Some (ai, bi) ->
         let ctx, pi = fresh_var ctx pi ai in
-        let ctx, ri = fresh_var ctx ri (TArr (bi, b')) in
+        let ctx, ri = fresh_var ctx ri (TMod (mu, TArr (bi, b'))) in
         let ni, bi = infer ctx ni e in
         (li, Bindlib.(box_expr ni |> bind_var ri |> bind_var pi |> unbox)), bi
     in
@@ -484,6 +507,7 @@ let check_prog =
        ("-", abs (int @-> int @-> int));
        ("=", abs (int @-> int @-> bool));
        ("string_eq", abs (string @-> string @-> bool));
+       ("string_of_int", abs (int @-> string));
        ("^", abs (string @-> string @-> string));
        ("&&", abs (bool @-> bool @-> bool));
        ("fail", abs (TForA (Any, Bindlib.(unit @-> (TVar v) |> box_type |> bind_var v |> unbox))));

@@ -114,7 +114,7 @@ let rec check ctx m s e = match m, s with
     let mu, a = split_var a in
     let nu, f = locks e gamma' in
     if not (Effects.sub_mod mu nu f) && not (is_abs ctx a) then
-      Type.no_access None (Bindlib.name_of v) ctx e;
+      Type.no_access None (Bindlib.name_of v) v ctx e;
     a
 
   (* T-Mod *)

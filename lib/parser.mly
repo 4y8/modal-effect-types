@@ -40,7 +40,7 @@ let spair (a, b) = SCons ("Pair", [a; b])
 %token <int> INT
 %token HANDLE DO WITH RETURN EFF FUN TYPE IF THEN ELSE FORALL MATCH MASK LET
 %token IN END VAL OF EFFECT
-%token PLUS MINUS TIMES AND CARET
+%token PLUS MINUS TIMES AND CARET DSCOL
 %token LANGLE RANGLE LSQUARE RSQUARE LCURLY RCURLY LPAR RPAR
 %token COMMA PIPE ARROW DARROW DOT DCOL EQU WILDCARD AT SCOL BANG
 %token UNIT
@@ -54,6 +54,8 @@ let spair (a, b) = SCons ("Pair", [a; b])
 
 %type <((string * surface_decl) * loc) list> file
 %start file
+%type <surface_top_level> top_level
+%start top_level
 
 %%
 
@@ -211,13 +213,17 @@ let seq_expr :=
   | ~ = if_expr; <>
   | loc_expr( | ~ = if_expr; SCOL; ~ = sexpr; <SSeq> )
 
-let sexpr :=
+let fun_expr :=
   | ~ = seq_expr; <>
+  | loc_expr(
+    | FUN; ~ = arg; ARROW; ~ = sexpr; <SLam>)
+
+let sexpr :=
+  | ~ = fun_expr; <>
   | loc_expr(
     | LET; p = pattern_list; DCOL; t = stype; EQU; m = sexpr; IN; n = sexpr;
     { wrap_let_pat (p, wrap_ann m t, n) }
-    | LET; p = pattern_list; EQU; m = sexpr; IN; n = sexpr; <wrap_let_pat>
-    | FUN; ~ = arg; ARROW; ~ = sexpr; <SLam>)
+    | LET; p = pattern_list; EQU; m = sexpr; IN; n = sexpr; <wrap_let_pat>)
 
 eff:
   | x = IDENT DCOL tin = stype DARROW tout = stype { x, (tin, tout) }
@@ -263,3 +269,7 @@ let decl :=
   | d = decl_adt; { d, Some ($startpos, $endpos) }
 
 file: d = decl* EOF { d };
+
+top_level:
+  | d = decl DSCOL { TLDecl (fst d) }
+  | m = fun_expr DSCOL { TLExpr m }

@@ -12,6 +12,18 @@ type value
   | VMask of value
 [@@deriving show]
 
+let rec pp_value fmt = function
+  | VClo _ -> Format.fprintf fmt "<fun>"
+  | VMask v -> pp_value fmt v
+  | VInt n -> Format.fprintf fmt "%d" n
+  | VStr s -> Format.fprintf fmt "\"%s\"" s
+  | VCon (c, []) -> Format.fprintf fmt "%s" c
+  | VCon (c, [v]) -> Format.fprintf fmt "%s %a" c pp_value v
+  | VCon (c, l) ->
+    Format.(fprintf fmt "%s (@[<hv>[%a]@])" c
+              (pp_print_list ~pp_sep:(fun fmt () -> fprintf fmt ",@;<1 1>")
+                 pp_value) l)
+
 type _ Effect.t += Do : string * value -> value t
 
 let unint = function

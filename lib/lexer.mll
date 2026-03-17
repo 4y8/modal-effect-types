@@ -51,6 +51,7 @@ rule lexer = parse
   | ';' { SCOL }
   | '=' { EQU }
   | '@' { AT }
+  | ";;" { DSCOL }
   | '!' { BANG }
   | '^' { CARET }
   | ('"' ([^ '"' '\\']* as s) '"') { STRING s }

@@ -63,6 +63,10 @@ type surface_decl
   | SDADT of (string * kind) list * ((string * surface_type list) list)
 [@@deriving show]
 
+type surface_top_level
+  = TLDecl of (string * surface_decl)
+  | TLExpr of surface_expr
+
 (* uncomment for debugging
 open Bindlib
 

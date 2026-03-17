@@ -130,7 +130,7 @@ let sub_mod mu nu f = match mu, nu with
   | MRel (l1, d1), MRel (l2, d2) ->
     let l, d = l1 >< d1 in
     let l', d' = l2 >< d2 in
-    List.sort compare l = List.sort compare l' && d === d' &&
+    eq_mask l l' && d === d' &&
     extract (fst f) l1 <> None && extract (fst f) l2 <> None
   | _, _ -> false
 

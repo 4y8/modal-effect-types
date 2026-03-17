@@ -96,7 +96,7 @@ let runBF c =
 
 type proc2 (e : Effect) = Proc2 of [e](list (proc2 e) -> unit)
 
-val run2 : forall (e : Effect) . []([co e, e]{unit} -> [e](list (proc2 e) -> unit))
+val run2 : forall (e : Effect) . [e]([co e, e]{unit} -> [e](list (proc2 e) -> unit))
 let run2 c =
   handle<co e>[e] c! with
   | return () =>

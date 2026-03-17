@@ -19,7 +19,7 @@ type 'a ctx =
   ; tid : (string * tvar) list }
 
 let (<:) ({gamma; _} as ctx) b =
-  {ctx with gamma = b :: gamma}
+  { ctx with gamma = b :: gamma }
 
 let rec get_var_kind gamma x = match gamma with
   | [] -> failwith "get_kind: internal error"

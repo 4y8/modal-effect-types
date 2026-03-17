@@ -165,11 +165,11 @@ let join_type loc ctx f t t' =
   let mu, g = get_guarded t in
   let nu, g' = get_guarded t' in
   if g <> g' then
-    type_mismatch loc g g';
+    type_mismatch loc ~expected:g ~got:g';
   if is_abs ctx g then
     g
   else match Effects.join_mod mu nu f with
-    | None -> mod_mismatch loc mu nu f
+    | None -> mod_mismatch loc ~expected:mu ~got:nu f
     | Some lam -> TMod (lam, g)
 
 let rec check ctx ({loc; sexpr} as m) a e =
@@ -208,6 +208,8 @@ let rec check ctx ({loc; sexpr} as m) a e =
     let b = a in (* stay consistent with the paper *)
     let f = e in
     let mu = List.map (check_mod ctx) mu |> List.fold_left Effects.compose Effects.id in
+    if not Effects.(sub_mod mu id f) then
+      no_unboxing loc mu f;
     let e = Effects.apply_mod mu f in
     let d = check_effect_ext ctx d in
     let ops = unfold_ext ctx d in
@@ -233,6 +235,8 @@ let rec check ctx ({loc; sexpr} as m) a e =
     let b = a in (* stay consistent with the paper *)
     let f = e in
     let mu = List.map (check_mod ctx) mu |> List.fold_left Effects.compose Effects.id in
+    if not Effects.(sub_mod mu id f) then
+      no_unboxing loc mu f;
     let e = Effects.apply_mod mu f in
     let d = check_effect_ext ctx d in
     let ops = unfold_ext ctx d in
@@ -288,10 +292,10 @@ let rec check ctx ({loc; sexpr} as m) a e =
     let m, b = infer ctx m e in
     let mu, g = get_guarded b in
     let nu, g' = get_guarded a in
-    if not Effects.(eq_ty g g') then type_mismatch loc g g'
+    if not Effects.(eq_ty g g') then type_mismatch loc ~expected:g' ~got:g
     else
       if not (Effects.sub_mod mu nu e) && not (is_abs ctx g) then
-        mod_mismatch loc mu nu e
+        mod_mismatch loc ~got:mu ~expected:nu e
       else
         m
 
@@ -364,7 +368,10 @@ and infer ctx {loc; sexpr} e =
   | SHand (m, d, mu, Deep, (l, (x, n))) ->
     let d = check_effect_ext ctx d in
     let f = e in
-    let mu = List.fold_right Effects.compose (List.map (check_mod ctx) mu) Effects.id in
+    let mu = List.fold_right Effects.compose
+        (List.map (check_mod ctx) mu) Effects.id in
+    if not Effects.(sub_mod mu id f) then
+      no_unboxing loc mu f;
     let nu = MRel ([], d) in
     let e = Effects.apply_mod mu f in
     let ops = unfold_ext ctx d in
@@ -458,7 +465,7 @@ let check_decl (ctx, prog) d = match d with
            c, Bindlib.(bind_mvar mvar l |> unbox)) l in
     { ctx with data = (x, { targs; cons }) :: ctx.data }, prog
 
-let check_prog =
+let init_ctx, _ =
   let int = TCon ("int", [||]) in
   let bool = TCon ("bool", [||]) in
   let string = TCon ("string", [||]) in
@@ -466,20 +473,20 @@ let check_prog =
   let (@->) t t' = TArr (t, t') in
   let v = Bindlib.new_var (fun v -> TVar v) "fail" in
   let abs t = TMod (MAbs ([], None), t) in
-  let init_ctx, _ =
-    fresh_vars
-      { gamma = [] ; tid = [] ; id = [] ; effects = []
-      ; data = ["int", { targs = [] ; cons = [] };
-                "string", { targs = [] ; cons = [] } ] }
-      [("+", abs (int @-> int @-> int));
-       ("*", abs (int @-> int @-> int));
-       ("-", abs (int @-> int @-> int));
-       ("=", abs (int @-> int @-> bool));
-       ("string_eq", abs (string @-> string @-> bool));
-       ("string_of_int", abs (int @-> string));
-       ("^", abs (string @-> string @-> string));
-       ("&&", abs (bool @-> bool @-> bool));
-       ("fail", abs (TForA (Any, Bindlib.(unit @-> (TVar v) |> box_type |> bind_var v |> unbox))));
-       ("print", abs (string @-> unit))]
-  in
+  fresh_vars
+    { gamma = [] ; tid = [] ; id = [] ; effects = []
+    ; data = ["int", { targs = [] ; cons = [] };
+              "string", { targs = [] ; cons = [] } ] }
+    [("+", abs (int @-> int @-> int));
+     ("*", abs (int @-> int @-> int));
+     ("-", abs (int @-> int @-> int));
+     ("=", abs (int @-> int @-> bool));
+     ("string_eq", abs (string @-> string @-> bool));
+     ("string_of_int", abs (int @-> string));
+     ("^", abs (string @-> string @-> string));
+     ("&&", abs (bool @-> bool @-> bool));
+     ("fail", abs (TForA (Any, Bindlib.(unit @-> (TVar v) |> box_type |> bind_var v |> unbox))));
+     ("print", abs (string @-> unit))]
+
+let check_prog =
   Fun.compose snd (List.fold_left check_decl (init_ctx, []))

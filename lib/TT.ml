@@ -160,7 +160,7 @@ let rec check ctx m s e = match m, s with
   | _, Check a ->
     let a' = check ctx m Hole e in
     if not Effects.(eq_ty a' a) then
-      Errors.type_mismatch None a' a;
+      Errors.type_mismatch None ~got:a' ~expected:a;
     a
 
   | _, _ -> failwith "todo"

@@ -61,3 +61,5 @@ let ty fmt a = ty_fora (Bindlib.free_vars (box_type a)) fmt a
 let mu fmt mu = modality (Bindlib.free_vars (box_mod mu)) fmt mu
 
 let ectx fmt ectx = eff_ctx (Bindlib.free_vars (box_effect_ctx ectx)) fmt ectx
+
+let eext fmt eext = eff_ext (Bindlib.free_vars (box_effect_ext eext)) fmt eext

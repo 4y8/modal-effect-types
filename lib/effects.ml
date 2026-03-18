@@ -67,9 +67,9 @@ let rec extract d l = match d with
     | Some l -> Option.map (fun e -> hd :: e) (extract tl l)
 
 (* Appendix D.1 *)
-let right_residual m m' f =
-  match m, m' with
-  | _, MAbs _ -> Some m'
+let right_residual mu nu f =
+  match mu, nu with
+  | _, MAbs _ -> Some nu
   | MAbs _, _ -> None
   | MRel (l', d'), MRel (l, d) ->
     match extract (fst f) (mask_diff l' l) with
@@ -153,7 +153,8 @@ let sub_mod mu nu f = match mu, nu with
     let l, d = l1 >< d1 in
     let l', d' = l2 >< d2 in
     eq_mask l l' && d === d' &&
-    extract (fst f) l1 <> None && extract (fst f) l2 <> None
+    extract (fst f) (mask_diff l1 l2) <> None &&
+    extract (fst f) (mask_diff l2 l1) <> None
   | _, _ -> false
 
 let rec get_op l = function

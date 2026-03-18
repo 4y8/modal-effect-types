@@ -30,9 +30,16 @@ let apply_non_arr loc a = error loc
 
 let expected_cons loc _ =
   error_str loc "Expected algebraic data type todo"
-let expected_forall loc _ =
-  error_str loc "Expected forall type for type application todo"
-let expected_val loc _ = error_str loc "Expected a value todo"
+
+let expected_forall loc a =
+  error loc
+    (fun fmt ->
+       fprintf fmt
+         "Type mismatch: this expression has type %a but expected a function prefixed by a forall as it is applied to a type_mismatch"
+         ty a)
+
+let expected_val loc _ =
+  error_str loc "Expected a value"
 
 exception End
 
@@ -73,6 +80,15 @@ let sub_eff_ctx fmt (d, eps) (d', eps') =
   | Some _, _ ->
     fprintf fmt "there is an effect variable in the former but not in the latter"
 
+let rec extract fmt f = function
+  | [] -> ()
+  | l :: tl ->
+    match Effects.find_label_eff l f with
+    | None ->
+      fprintf fmt "effect %s is not present" l;
+      raise End
+    | Some (_, f) -> extract fmt f tl
+
 let sub_mod fmt mu nu f = match mu, nu with
   | MAbs e, _ ->
     fprintf fmt "%a should be a sub context of %a, but: "
@@ -95,12 +111,10 @@ let sub_mod fmt mu nu f = match mu, nu with
     end;
     sub_eff fmt d d';
     sub_eff fmt d' d;
-
-    if Effects.(extract (fst f) l1 = None || extract (fst f) l2 = None) then
-      begin
-        fprintf fmt "todo";
-        raise End
-      end
+    fprintf fmt
+      "each label present in only one of the masks should be present in the ambiant context %a, but " ectx f;
+    extract fmt (fst f) Effects.(mask_diff l1 l2);
+    extract fmt (fst f) Effects.(mask_diff l2 l1);
   | MRel _, MAbs _ ->
     fprintf fmt "a relative modality cannot be a submodality of an absolute modality"
 
@@ -130,12 +144,26 @@ let no_apply_abs loc _ = error_str loc
 let no_apply_type loc _ = error_str loc
     "Cannot apply to a value of type todo"
 
+let right_residual fmt mu nu f =
+  match mu, nu with
+  | MAbs _, _ ->
+    fprintf fmt
+      "the variable is protected by an absolute modality but doesn't have an pure type";
+    raise End
+  | MRel (l', _), MRel (l, _) ->
+    fprintf fmt "in the context %a of the variable, " ectx f;
+    extract fmt (fst f) Effects.(mask_diff l' l)
+  | _, _ -> ()
+
 let no_access loc x v ctx e =
-  let _, a, _ = get_type_context ctx.gamma v in
+  let _, a, gamma' = get_type_context ctx.gamma v in
+  let mu, _ = get_guarded a in
+  let nu, f = locks e gamma' in
   error loc
     (fun fmt -> fprintf fmt
-        "Cannot access variable %s of type %a in effect context %a"
-        x ty a ectx e)
+        "Cannot access variable %s of type %a in effect context %a, because: "
+        x ty a ectx e;
+    right_residual fmt mu nu f)
 
 let no_unboxing loc m e =
   error loc

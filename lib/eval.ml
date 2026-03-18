@@ -105,8 +105,10 @@ let rec eval ctx = function
       | Some _, v when ht = Shallow && List.mem e !handled ->
         continue k (perform (Do (e, v)))
       | Some ni, v ->
+        let open Multicont.Deep in
+        let k = promote k in
         handled := e :: !handled;
-        eval ctx (Bindlib.(subst (subst ni (Val v)) (Val (VClo (continue k)))))
+        eval ctx (Bindlib.(subst (subst ni (Val v)) (Val (VClo (resume k)))))
 
 and eval_pat v vals = function
   | PWild -> Some vals

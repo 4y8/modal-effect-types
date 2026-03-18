@@ -6,6 +6,5 @@
  (infer true))
 
 (library
- (preprocess (pps ppx_deriving.show))
- (libraries bindlib)
+ (libraries bindlib multicont)
  (name core))

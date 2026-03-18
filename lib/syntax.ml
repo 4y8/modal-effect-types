@@ -2,10 +2,8 @@ type loc = (Lexing.position * Lexing.position) option
 let pp_loc _ _ = ()
 
 type kind = Abs | Any | Effect
-[@@deriving show]
 
 type htype = Shallow | Deep
-[@@deriving show]
 
 type surface_mdesc
   = SMAbs of surface_effect list
@@ -24,14 +22,12 @@ and surface_tdsec
   | STForA of string * kind * surface_type
   | SECtx of surface_effect list
 and surface_type = { stype : surface_tdsec ; tloc : loc }
-[@@deriving show]
 
 type surface_pdesc
   = SPVar of string
   | SPCons of string * surface_pat list
   | SPWild
 and surface_pat = { spat : surface_pdesc ; ploc : loc }
-[@@deriving show]
 
 type surface_desc
   = SDo of string * surface_expr
@@ -53,7 +49,6 @@ and surface_expr = { sexpr : surface_desc ; loc : loc }
 
 and surface_handler = (string * (loc * string * string * surface_expr)) list *
                       (string * surface_expr)
-[@@deriving show]
 
 type surface_decl
   = SDEff of (string * kind) list *
@@ -61,7 +56,6 @@ type surface_decl
   | SDSig of surface_type
   | SDFun of surface_expr
   | SDADT of (string * kind) list * ((string * surface_type list) list)
-[@@deriving show]
 
 type surface_top_level
   = TLDecl of (string * surface_decl)

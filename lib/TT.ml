@@ -153,7 +153,7 @@ let rec check ctx m s e = match m, s with
     let a = check ctx m Hole e in
     let k, a = Type.split_forall None a in
     if k = Abs && not (is_abs ctx b) then
-      Errors.kind_mismatch None b Syntax.Abs Syntax.Any;
+      Errors.kind_mismatch None b ~expected:Syntax.Abs ~got:Syntax.Any;
     Bindlib.subst a b
 
   (* Switch *)

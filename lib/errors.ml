@@ -4,7 +4,11 @@ open Format
 open Context
 open Syntax
 
-let kind_mismatch loc _ _ _ = error_str loc "Kind mismatch todo"
+let kind_mismatch loc ~expected ~got a =
+  error loc
+    (fun fmt -> fprintf fmt
+        "Kind mismatch: type %a has kind %a but expected a type of kind %a"
+        ty a kind got kind expected)
 
 let unknown_var loc x = error_str loc ("Unknown variable " ^ x)
 let unknown_eff loc x = error_str loc ("Unknown effect " ^ x)
@@ -121,7 +125,7 @@ let sub_mod fmt mu nu f = match mu, nu with
 let mod_mismatch loc ~expected ~got e =
   error loc
     (fun fmt ->
-       fprintf fmt "Modality mismatch: this expression has top-level modality %a but expected an expression with modality %a;@ the former is not a submodality of the latter at context %a because: "
+       fprintf fmt "Modality mismatch: this expression has top-level modality %a but expected an expression with modality %a;@ the former is not a submodality of the latter at context %a because "
          mu got mu expected ectx e;
        try sub_mod fmt got expected e
        with End -> ())
@@ -148,7 +152,7 @@ let right_residual fmt mu nu f =
   match mu, nu with
   | MAbs _, _ ->
     fprintf fmt
-      "the variable is protected by an absolute modality but doesn't have an pure type";
+      "the variable is protected by an absolute modality but doesn't have a pure type";
     raise End
   | MRel (l', _), MRel (l, _) ->
     fprintf fmt "in the context %a of the variable, " ectx f;
@@ -160,15 +164,17 @@ let no_access loc x v ctx e =
   let mu, _ = get_guarded a in
   let nu, f = locks e gamma' in
   error loc
-    (fun fmt -> fprintf fmt
-        "Cannot access variable %s of type %a in effect context %a, because: "
+    (fun fmt ->
+       fprintf fmt
+        "Cannot access variable %s of type %a in effect context %a because "
         x ty a ectx e;
-    right_residual fmt mu nu f)
+       try right_residual fmt nu mu f
+       with End -> ())
 
 let no_unboxing loc m e =
   error loc
     (fun fmt -> fprintf fmt
-        "Cannot unbox modality %a in effect context %a; it is not a submodality of identity because: "
+        "Cannot unbox modality %a in effect context %a; it is not a submodality of identity because "
         mu m ectx e;
       try sub_mod fmt m Effects.id e
       with End -> ())

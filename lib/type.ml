@@ -55,7 +55,7 @@ and check_type_kind ctx t k =
   let a = check_type ctx t in
   let k' = get_kind ctx a in
   if not (k' <<< k) then
-    kind_mismatch t.tloc a k k';
+    kind_mismatch t.tloc a ~expected:k ~got:k';
   a
 
 and check_mod ctx m = match m.smod with
@@ -70,8 +70,10 @@ and check_effect ctx { seff_name; seff_args; eloc } args_kind t =
     |> Array.of_list in
   let ectx = Bindlib.msubst t eff_args in
   List.iter (fun { op_in; op_out; _ } ->
-      if not (is_abs ctx op_in) then kind_mismatch eloc op_in Abs Any;
-      if not (is_abs ctx op_out) then kind_mismatch eloc op_out Abs Any;
+      if not (is_abs ctx op_in) then
+        kind_mismatch eloc op_in ~expected:Abs ~got:Any;
+      if not (is_abs ctx op_out) then
+        kind_mismatch eloc op_out ~expected:Abs ~got:Any;
     ) ectx;
   { eff_name = seff_name; eff_args }
 
@@ -91,7 +93,8 @@ and check_effect_ctx ctx l =
         | None -> unknown_eff eloc seff_name
         | Some v ->
           if get_var_kind ctx.gamma v <> Effect then
-            kind_mismatch eloc (TVar v) Effect (get_var_kind ctx.gamma v);
+            kind_mismatch eloc (TVar v) ~expected:Effect
+              ~got:(get_var_kind ctx.gamma v);
           if not List.(is_empty d) then
             non_last_evar eloc seff_name;
           if Option.is_some eps then
@@ -159,7 +162,8 @@ let unfold_ext ctx d =
       let { eops; _ } = List.assoc eff_name ctx.effects in
       Bindlib.msubst eops eff_args) d |> List.flatten |>
   List.map (fun { op_name; op_in; op_out } ->
-      { op_name ; op_in = Effects.norm_ty op_in ; op_out = Effects.norm_ty op_out })
+      { op_name ; op_in = Effects.norm_ty op_in
+      ; op_out = Effects.norm_ty op_out })
 
 let join_type loc ctx f t t' =
   let mu, g = get_guarded t in
@@ -207,7 +211,8 @@ let rec check ctx ({loc; sexpr} as m) a e =
   | SHand (m, d, mu, Deep, (l, (x, n))), a ->
     let b = a in (* stay consistent with the paper *)
     let f = e in
-    let mu = List.map (check_mod ctx) mu |> List.fold_left Effects.compose Effects.id in
+    let mu = List.map (check_mod ctx) mu
+      |> List.fold_left Effects.compose Effects.id in
     if not Effects.(sub_mod mu id f) then
       no_unboxing loc mu f;
     let e = Effects.apply_mod mu f in
@@ -234,7 +239,8 @@ let rec check ctx ({loc; sexpr} as m) a e =
   | SHand (m, d, mu, Shallow, (l, (x, n))), a ->
     let b = a in (* stay consistent with the paper *)
     let f = e in
-    let mu = List.map (check_mod ctx) mu |> List.fold_left Effects.compose Effects.id in
+    let mu = List.map (check_mod ctx) mu
+      |> List.fold_left Effects.compose Effects.id in
     if not Effects.(sub_mod mu id f) then
       no_unboxing loc mu f;
     let e = Effects.apply_mod mu f in
@@ -315,7 +321,7 @@ and infer ctx {loc; sexpr} e =
     end
   (* B-Annotation *)
   | SAnn (m, a) ->
-    let a = check_type ctx a in
+    let a = check_type_kind ctx a Any in
     let m = check ctx m a e in
     m, a
 
@@ -355,7 +361,7 @@ and infer ctx {loc; sexpr} e =
     let k, b = split_forall loc g in
     let k' = get_kind ctx a in
     if not (k' <<< k) then
-      kind_mismatch tloc a k k';
+      kind_mismatch tloc ~expected:k ~got:k' a;
     m,
     if k = Effect then Effects.subst b (ectx_of_type a) else Bindlib.subst b a
 
@@ -428,8 +434,8 @@ and infer ctx {loc; sexpr} e =
 
 let check_decl (ctx, prog) d = match d with
   | (x, SDSig t), _ ->
-    let t = check_type ctx t in
-    let ctx, _ = fresh_var ctx x t in
+    let a = check_type ctx t in
+    let ctx, _ = fresh_var ctx x a in
     ctx, prog
   | (x, SDFun e), loc ->
     let v = match List.assoc_opt x ctx.id with

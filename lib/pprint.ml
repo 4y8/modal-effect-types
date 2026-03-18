@@ -36,7 +36,12 @@ and ty_atom ctx fmt = function
   | a -> fprintf fmt "(%a)" (ty_fora ctx) a
 
 and eff ctx fmt {eff_name; eff_args} =
-  fprintf fmt "%s %a" eff_name (pp_print_array ~pp_sep:(fun fmt () -> fprintf fmt ", ") (ty_atom ctx)) eff_args
+  if Array.length eff_args = 0 then
+    fprintf fmt "%s" eff_name
+  else
+    fprintf fmt "%s %a" eff_name
+      (pp_print_array ~pp_sep:(fun fmt () -> fprintf fmt " ")
+         (ty_atom ctx)) eff_args
 and eff_ext ctx =
   pp_print_list ~pp_sep:(fun fmt () -> fprintf fmt ", ") (eff ctx)
 and eff_ctx ctx fmt (d, eps) =

@@ -8,6 +8,7 @@ let iter f l =
   | Cons (hd, tl) -> f hd; iter @a f tl
   end
 val append : forall a . [](list a -> list a -> list a)
+
 let append l l' =
   match l with
   | Nil -> l'
@@ -18,6 +19,7 @@ let append l l' =
 -- section 2.3
 -- current error when omitting the modality : Cannot unbox function in application todo
 eff gen a = yield : a => unit
+
 val as_list : [](<gen int>(unit -> unit) -> list int)
 let as_list f =
   handle<gen int> f () with

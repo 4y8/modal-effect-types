@@ -287,6 +287,7 @@ let rec check ctx ({loc; sexpr} as m) a e =
     let m, t = infer ctx m e in
     let ctx, v = fresh_var ctx x t in
     Let (m, t, Bindlib.(check ctx n a e |> box_expr |> bind_var v |> unbox))
+
   (* B-Switch *)
   | _ ->
     let m, b = infer ctx m e in
@@ -321,11 +322,15 @@ and infer ctx {loc; sexpr} e =
   (* B-MaskInfer *)
   | SMask (l, m) ->
     List.iter (fun (l, loc) ->
-        if not List.(assoc_opt l ctx.effects <> None) then
+        if List.(assoc_opt l ctx.effects = None) then
           unknown_eff loc l) l;
     let l, _ = List.split l in
     let m, a = infer ctx m (Effects.remove_labels e l) in
-    Mask (l, m), TMod (MRel (l, []), a)
+    let lext = List.(map (fun l ->
+        let { eops; _ } = List.assoc l ctx.effects in
+        map (fun { op_name; _ } -> op_name) (snd Bindlib.(unmbind eops))) l
+       |> flatten) in
+    Mask (lext, m), TMod (MRel (l, []), a)
 
   (* B-App *)
   | SApp (m, n) ->
@@ -419,7 +424,7 @@ and infer ctx {loc; sexpr} e =
     let n, b = infer ctx n e in
     Let (m, a, Bindlib.(n |> box_expr |> bind_var v |> unbox)), b
   | _ ->
-    failwith "todo"
+    cannot_infer_expr loc
 
 let check_decl (ctx, prog) d = match d with
   | (x, SDSig t), _ ->

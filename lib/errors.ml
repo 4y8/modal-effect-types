@@ -146,9 +146,11 @@ let no_unboxing loc m e =
       with End -> ())
 
 let two_effect_var loc =
-  Error.error_str loc "Cannot have two effect variables in a single row"
+  error_str loc "Cannot have two effect variables in a single row"
 
 let non_last_evar loc e = error loc
     (fun fmt -> fprintf fmt
         "Effect type variable %s should be at the end of the row" e)
 
+let cannot_infer_expr loc =
+  error_str loc "Cannot infer the type of expression"

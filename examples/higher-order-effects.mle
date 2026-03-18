@@ -81,23 +81,34 @@ let wakeProc! =
   | None -> ()
   end
 
-
-val runBF : forall (e : Effect) . [queue (proc e), e]([co [queue (proc e), e], queue (proc e), e]{unit} -> unit)
-let runBF c =
-  handle<co [queue (proc e), e]>[queue (proc e), e] c! with
+val runBFShallow : forall (e : Effect) . [queue (proc e), e]([co e, queue (proc e), e]{unit} -> unit)
+let runBFShallow c =
+  handle<co e>[queue (proc e), e]! c! with
   | return () => (wakeProc @e)!
+  | fork p k =>
+    enqProc @e {runBFShallow @e {mask<queue> (p!)}};
+    runBFShallow @e k
+  | suspend () k =>
+    enqProc @e {runBFShallow @e k};
+    (wakeProc @e)!
+  end
+
+val runBF : forall (e : Effect) . [queue (proc e), e]([co e, queue (proc e), e]{unit} -> unit)
+let runBF c =
+  handle<co e>[queue (proc e), e] c! with
+  | return () => (wakeProc @e)!
+  | fork p k =>
+    enqProc @e {runBF @e {mask<queue> (p!)}};
+    k!
   | suspend () k =>
     enqProc @e k;
     (wakeProc @e)!
-  | fork p k =>
-    enqProc @e {runBF @e p};
-    k!
   end
 
 type proc2 (e : Effect) = Proc2 of [e](list (proc2 e) -> unit)
 
-val run2 : forall (e : Effect) . [e]([co e, e]{unit} -> [e](list (proc2 e) -> unit))
-let run2 c =
+val runList : forall (e : Effect) . [e]([co e, e]{unit} -> [e](list (proc2 e) -> unit))
+let runList c =
   handle<co e>[e] c! with
   | return () =>
     fun l ->
@@ -105,38 +116,13 @@ let run2 c =
     | Nil -> ()
     | Cons (Proc2 (f), tl) -> f tl
     end
-  | fork p k => fun l -> k () (snoc @(proc2 e) l (Proc2 (run2 @e p)))
+  | fork p k => fun l -> k () (snoc @(proc2 e) l (Proc2 (runList @e p)))
   | suspend () k =>
     fun l ->
     match snoc @(proc2 e) l (Proc2 (k ())) with
     | Nil -> ()
     | Cons (Proc2 (f), tl) -> f tl
     end
-  end
-
-val runBF2 : forall (e : Effect) . [queue (proc e), e]([co e, queue (proc e), e]{unit} -> unit)
-let runBF2 c =
-  handle<co e>[queue (proc e), e]! c! with
-  | return () => (wakeProc @e)!
-  | fork p k =>
-    enqProc @e {runBF2 @e {mask<queue> (p!)}};
-    runBF2 @e k
-  | suspend () k =>
-    enqProc @e {runBF2 @e k};
-    (wakeProc @e)!
-  end
-
-
-val runBF3 : forall (e : Effect) . [queue (proc e), e]([co e, queue (proc e), e]{unit} -> unit)
-let runBF3 c =
-  handle<co e>[queue (proc e), e] c! with
-  | return () => (wakeProc @e)!
-  | fork p k =>
-    enqProc @e {runBF3 @e {mask<queue> (p!)}};
-    k!
-  | suspend () k =>
-    enqProc @e k;
-    (wakeProc @e)!
   end
 
 val test : [](int -> [co [queue int], queue int]{unit})
@@ -151,31 +137,23 @@ let test n =
      do suspend ();
      print (string_of_int n)}
 
-val test2 : forall (e : Effect) . [](int -> [co [gen int, e], gen int, e]{unit})
-let test2 n =
-  if n = 0 then
-    { () }
-  else
-    {print (string_of_int n);
-     do fork (test2 @e (n - 1));
-     print (string_of_int n);
-     do suspend ();
-     print (string_of_int n)}
-
 val main : [](unit -> unit)
 let main () =
+  print "runBFShallow";
+  handle<queue int> runFifo @(proc [queue int]) @unit {runBFShallow @[queue int] {mask<queue> ((test 3)!)}} (emptyZipQ @(proc [queue int])!) with
+  | return v => ()
+  | dequeue x k => k None
+  | enqueue x k => print ("enqueue: " ^ string_of_int x); k!
+  end;
   print "runBF";
-  handle<gen int> runFifo @(proc [gen int]) @unit {runBF @[gen int] (test2 @[queue (proc [gen int])] 3)} (emptyZipQ @(proc [gen int])!) with
+  handle<queue int> runFifo @(proc [queue int]) @unit {runBF @[queue int] {mask<queue> ((test 3)!)}} (emptyZipQ @(proc [queue int])!) with
   | return v => ()
-  | yield x k => ()
+  | dequeue x k => k None
+  | enqueue x k => print ("enqueue: " ^ string_of_int x); k!
   end;
-  print "run2";
-  handle<gen int> run2 @[gen int] (test2 @[] 3) Nil with
+  print "runList";
+  handle<queue int> runList @[queue int] (test 3) Nil with
   | return v => ()
-  | yield x k => ()
-  end;
-  handle<queue int> runFifo @(proc [queue int]) @unit {runBF2 @[queue int] {mask<queue> ((test 3)!)}} (emptyZipQ @(proc [queue int])!) with
-  | return v => ()
-  | dequeue x k => ()
-  | enqueue x k => ()
+  | dequeue x k => k None
+  | enqueue x k => print ("enqueue: " ^ string_of_int x); k!
   end

@@ -5,9 +5,31 @@ let show_ast = ref false
 let eval = ref false
 let launch_repl = ref true
 
+let open_file f tctx ectx =
+  try
+    launch_repl := false;
+    let ic = open_in f in
+    let lb = Lexing.from_channel ic in
+    Lexing.set_filename lb f;
+    let p =
+      try
+        Core.Parser.file Core.Lexer.lexer lb
+      with
+        _ ->
+        Core.Error.error_str_lexbuf lb
+          (Printf.sprintf "Unexpected token: \"%s\"" (Lexing.lexeme lb)) in
+    if !show_ast then
+      List.iter (fun ((_, d), _) -> print_endline @@ show_surface_decl d) p;
+    let tctx, p = check_prog tctx p in
+    Core.Eval.eval_prog ectx p;
+    close_in ic;
+    tctx
+  with
+  | Core.Error.Exit -> exit 1
+
 let repl () =
   let lb = Lexing.from_channel stdin in
-  let eval_ctx = ref Core.Eval.stdlib in
+  let ectx = ref (Core.Eval.build_stdlib_map init_ctx) in
   let rec loop ctx =
     try
       print_string "# ";
@@ -22,27 +44,29 @@ let repl () =
       in
       match tl with
       | TLExpr m ->
-        let _, a = infer ctx m ([], None) in
-        let v = Core.Eval.eval eval_ctx [] m in
+        let m, a = infer ctx m ([], None) in
+        let v = Core.Eval.eval ectx m in
         Format.printf "- : %a = %a@." Core.Pprint.ty a Core.Eval.pp_value v;
         loop ctx
+      | TLOpen f -> loop (open_file f ctx ectx)
       | TLDecl d ->
         let ctx = match d with
           | x, SDFun m ->
-            let a, ctx =
+            let a, v, m, ctx =
               match List.assoc_opt x ctx.id with
               | Some v ->
                 let _, a, _ = Core.Context.(get_type_context ctx.gamma v) in
-                a, ctx
+                let m = check ctx m a ([], None) in
+                a, v, m, ctx
               | None ->
-                let _, a = infer ctx m ([], None) in
-                let ctx, _ = Core.Context.fresh_var ctx x a in
-                a, ctx
+                let m, a = infer ctx m ([], None) in
+                let ctx, v = Core.Context.fresh_var ctx x a in
+                a, v, m, ctx
             in
-            let v = Core.Eval.eval eval_ctx [] m in
-            eval_ctx := Core.Eval.(SMap.add x v !eval_ctx);
+            let vf = Core.Eval.eval ectx m in
+            ectx := Core.Eval.(VMap.add v vf !ectx);
             Format.printf "val %s : %a = %a@." x Core.Pprint.ty a
-              Core.Eval.pp_value v;
+              Core.Eval.pp_value vf;
             ctx
           | _ -> fst (check_decl (ctx, []) (d, None))
         in
@@ -66,31 +90,18 @@ let repl () =
   loop init_ctx
 
 let read_file f =
-  try
-    launch_repl := false;
-    let ic = open_in f in
-    let lb = Lexing.from_channel ic in
-    Lexing.set_filename lb f;
-    let p =
-      try
-        Core.Parser.file Core.Lexer.lexer lb
-      with
-        _ ->
-        Core.Error.error_str_lexbuf lb
-          (Printf.sprintf "Unexpected token: \"%s\"" (Lexing.lexeme lb)) in
-    if !show_ast then
-      List.iter (fun ((_, d), _) -> print_endline @@ show_surface_decl d) p;
-    let p = check_prog p in
-    if !eval then (
-      ignore (Core.Eval.eval_prog p)
-    );
-    close_in ic
-  with
-  | Core.Error.Exit -> exit 1
+  let ectx = ref (Core.Eval.build_stdlib_map init_ctx) in
+  let tctx = open_file f init_ctx ectx in
+  if !eval then
+    match Core.Eval.VMap.find Core.Context.(List.assoc "main" tctx.id)
+            !ectx with
+    | VClo f -> ignore (f (VCon ("Unit", [])))
+    | _ -> failwith "main should be a function"
+
 
 let () =
   let spec_list = [("--show-ast", Arg.Set show_ast, "Print AST of the program");
                    ("--eval", Arg.Set eval, "Evaluate the program (needs a main function)")] in
   Arg.parse spec_list read_file "";
   if !launch_repl then
-    repl ()
+    ignore (repl ())

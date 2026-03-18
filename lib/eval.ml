@@ -2,15 +2,10 @@ open Syntax
 open Effect
 open Effect.Deep
 
-module SMap = Map.Make(String)
-
-type value
-  = VClo of (value -> value)
-  | VInt of int
-  | VStr of string
-  | VCon of string * value list
-  | VMask of value
-[@@deriving show]
+module VMap = Map.Make(struct
+    type t = var
+    let compare = Bindlib.compare_vars
+  end)
 
 let rec pp_value fmt = function
   | VClo _ -> Format.fprintf fmt "<fun>"
@@ -20,7 +15,7 @@ let rec pp_value fmt = function
   | VCon (c, []) -> Format.fprintf fmt "%s" c
   | VCon (c, [v]) -> Format.fprintf fmt "%s %a" c pp_value v
   | VCon (c, l) ->
-    Format.(fprintf fmt "%s (@[<hv>[%a]@])" c
+    Format.(fprintf fmt "%s (@[<hv>%a@])" c
               (pp_print_list ~pp_sep:(fun fmt () -> fprintf fmt ",@;<1 1>")
                  pp_value) l)
 
@@ -43,7 +38,6 @@ let unbool = (=) (VCon ("True", []))
 exception Fail
 
 let stdlib =
-  SMap.of_list
   [ "+", VClo (fun x -> VClo (fun y -> VInt (unint x + unint y)))
   ; "-", VClo (fun x -> VClo (fun y -> VInt (unint x - unint y)))
   ; "*", VClo (fun x -> VClo (fun y -> VInt (unint x - unint y)))
@@ -56,29 +50,31 @@ let stdlib =
   ; "string_of_int", VClo (fun x -> VStr (string_of_int (unint x)))
   ]
 
-let rec eval ctx env {sexpr; _} = match sexpr with
-  | SInt n -> VInt n
-  | SStr s -> VStr s
-  | SCons (c, l) -> VCon (c, List.map (eval ctx env) l)
-  | SVar x ->
-    begin match List.assoc_opt x env with
+let build_stdlib_map ctx =
+  Context.(List.map (fun (x, v) -> List.assoc x ctx.id, v) stdlib
+           |> VMap.of_list)
+
+let rec eval ctx = function
+  | Val v -> v
+  | Lit (Int n) -> VInt n
+  | Lit (Str s) -> VStr s
+  | Con (c, l) -> VCon (c, List.map (eval ctx) l)
+  | Var x ->
+    begin match VMap.find_opt x !ctx with
       | Some v -> v
-      | None -> SMap.find x !ctx
+      | None -> Error.error_str None "missing a definition"
     end
-  | SLam (x, m) -> VClo (fun v -> eval ctx ((x, v) :: env) m)
-  | SApp (m, n) ->
-    begin match eval ctx env m with
-      | VClo f -> f (eval ctx env n)
+  | Lam (_, m) ->
+    VClo (fun v -> eval ctx (Bindlib.subst m (Val v)))
+  | App (m, n) ->
+    begin match eval ctx m with
+      | VClo f -> f (eval ctx n)
       | _ -> failwith "internal error"
     end
-  | SAppT (m, _)
-  | SAnn (m, _) -> eval ctx env m
-  | SSeq (m, n) -> let _ = eval ctx env m in eval ctx env n
-  | SDo (e, m) -> perform (Do (e, eval ctx env m))
-  | SMask (l, m) ->
-    let l, _ = List.split l in
+  | Do (e, m) -> perform (Do (e, eval ctx m))
+  | Mask (l, m) ->
     begin try
-        eval ctx env m
+        eval ctx m
       with
       | effect (Do (e, v)), k ->
         if List.mem e l then
@@ -86,22 +82,21 @@ let rec eval ctx env {sexpr; _} = match sexpr with
         else
         continue k (perform (Do (e, v)))
     end
-  | SLet (x, m, n) -> eval ctx ((x, eval ctx env m) :: env) n
-  | SMatch (m, l) ->
-    let v = eval ctx env m in
-      begin match List.find_map (fun (p, n) -> Option.map (fun env -> env, n)
-                                    (eval_pat env v p)) l with
+  | Let (m, _, n) -> eval ctx (Bindlib.subst n (Val (eval ctx m)))
+  | Match (m, l) ->
+    let v = eval ctx m in
+      begin match List.find_map (fun (p, n) -> Option.map (fun vals -> vals, n)
+                                    (eval_pat v [] p)) l with
       | None ->
-    print_endline (show_surface_expr m);
-    print_endline (show_value v);
-        failwith "missing case"
-      | Some (env, n) -> eval ctx env n
+        Error.error_str None "missing case in pattern matching"
+      | Some (vals, n) ->
+        eval ctx (Bindlib.msubst n (Array.of_list vals))
     end
-  | SHand (m, _, _, ht, (h, (r, n))) ->
+  | Hand (m, _, ht, r, h) ->
     let handled = ref [] in
     try
-      let v = eval ctx env m in
-      eval ctx ((r, v) :: env) n
+      let v = eval ctx m in
+      eval ctx (Bindlib.subst r (Val v))
     with
     | effect (Do (e, v)), k ->
       match List.assoc_opt e h, v with
@@ -109,27 +104,24 @@ let rec eval ctx env {sexpr; _} = match sexpr with
       | None, v -> continue k (perform (Do (e, v)))
       | Some _, v when ht = Shallow && List.mem e !handled ->
         continue k (perform (Do (e, v)))
-      | Some (_, pi, ri, ni), _ ->
+      | Some ni, v ->
         handled := e :: !handled;
-        eval ctx ((pi, v) :: (ri, VClo (continue k)) :: env) ni
+        eval ctx (Bindlib.(subst (subst ni (Val v)) (Val (VClo (continue k)))))
 
-and eval_pat env v {spat; _} = match spat with
-  | SPWild -> Some env
-  | SPVar x -> Some ((x, v) :: env)
-  | SPCons (c, l) ->
+and eval_pat v vals = function
+  | PWild -> Some vals
+  | PVar _ -> Some (Val v :: vals)
+  | PCon (c, l) ->
     match v with
     | VCon (c', l') when c = c' ->
-      List.fold_left
-        (function
-          | None -> fun _ -> None
-          | Some env -> fun (p, v) -> eval_pat env v p)
-        (Some env) (List.combine l l')
+      List.fold_right
+        (fun (p, v) -> function
+          | None -> None
+          | Some vals -> eval_pat v vals p)
+        (List.combine l l') (Some vals)
     | _ -> None
 
-let eval_prog p =
-  let ctx = ref stdlib in
+let eval_prog ectx p =
   let first _ x y = match x with None -> y | _ -> x in
-  ctx := SMap.(merge first (of_list (List.map (Pair.map_snd (eval ctx [])) p)) stdlib);
-  match SMap.find "main" !ctx with
-  | VClo f -> ignore (f (VCon ("Unit", []))); !ctx
-  | _ -> failwith "main should be a function"
+  ectx :=
+    VMap.(merge first (of_list (List.map (Pair.map_snd (eval ectx)) p)) !ectx)

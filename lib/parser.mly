@@ -39,7 +39,7 @@ let spair (a, b) = SCons ("Pair", [a; b])
 %token <string> STRING
 %token <int> INT
 %token HANDLE DO WITH RETURN EFF FUN TYPE IF THEN ELSE FORALL MATCH MASK LET
-%token IN END VAL OF EFFECT
+%token IN END VAL OF EFFECT OPEN
 %token PLUS MINUS TIMES AND CARET DSCOL
 %token LANGLE RANGLE LSQUARE RSQUARE LCURLY RCURLY LPAR RPAR
 %token COMMA PIPE ARROW DARROW DOT DCOL EQU WILDCARD AT SCOL BANG
@@ -273,3 +273,4 @@ file: d = decl* EOF { d };
 top_level:
   | d = decl DSCOL { TLDecl (fst d) }
   | m = fun_expr DSCOL { TLExpr m }
+  | OPEN s = STRING DSCOL { TLOpen s }

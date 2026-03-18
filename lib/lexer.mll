@@ -9,7 +9,7 @@
     ["handle", HANDLE; "do", DO; "with", WITH; "return", RETURN;
      "eff", EFF; "fun", FUN; "type", TYPE; "if", IF; "then", THEN;
      "else", ELSE; "forall", FORALL; "match", MATCH; "_", WILDCARD; "of", OF;
-     "mask", MASK; "let", LET; "in", IN; "end", END; "val", VAL]
+     "mask", MASK; "let", LET; "in", IN; "end", END; "val", VAL; "open", OPEN]
 }
 
 let digit = ['0'-'9']

@@ -66,6 +66,7 @@ type surface_decl
 type surface_top_level
   = TLDecl of (string * surface_decl)
   | TLExpr of surface_expr
+  | TLOpen of string
 
 (* uncomment for debugging
 open Bindlib
@@ -153,6 +154,13 @@ type concrete_mod = pure_mod * effect_ctx
 
 type lit = Int of int | Str of string
 
+type value
+  = VClo of (value -> value)
+  | VInt of int
+  | VStr of string
+  | VCon of string * value list
+  | VMask of value
+
 type expr
   = Do of string * expr
   | Var of var
@@ -166,6 +174,7 @@ type expr
             (expr, expr) Bindlib.binder *
             (string * (expr, (expr, expr) Bindlib.binder) Bindlib.binder) list
   | Match of expr * (pat * (expr, expr) Bindlib.mbinder) list
+  | Val of value
 
 and pat =
   | PCon of string * pat list
@@ -211,6 +220,7 @@ let rec box_pat = function
 
 let rec box_expr = function
   | Do (e, m) -> do_ e (box_expr m)
+  | Val v -> Bindlib.box (Val v)
   | Var v -> var_ v
   | Lit l -> lit_ l
   | Lam (a, m) -> lam_ (box_type a) (Bindlib.box_binder box_expr m)

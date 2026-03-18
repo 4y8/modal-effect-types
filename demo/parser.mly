@@ -1,6 +1,6 @@
 %{
 
-open Core.Eval
+open Core.Syntax
 
 let vlam (x, m) =
   List.fold_right (fun (x, t) m -> VCon ("SLam", [x; t; m])) x m

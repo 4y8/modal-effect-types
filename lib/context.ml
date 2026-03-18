@@ -56,7 +56,7 @@ let is_type ctx a =
 
 let rec get_guarded = function
   | TMod (mu, t) -> let nu, g = get_guarded t in
-    Effects.compose nu mu, g
+    Effects.compose mu nu, g
   | g -> Effects.id, g
 
 let across ctx a nu f =

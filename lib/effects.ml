@@ -77,6 +77,28 @@ let right_residual m m' f =
     | Some f ->
       Some (MRel (erase_types d' @ (mask_diff l l'), d @ f))
 
+let rec norm_ty = function
+  | TVar a -> TVar a
+  | TCon (s, a) -> TCon (s, Array.map norm_ty a)
+  | TForA (k, b) ->
+    let v, a = Bindlib.unbind b in
+    Bindlib.(bind_var v (box_type (norm_ty a)) |> tfora_ k |> unbox)
+  | TArr (a, b) -> TArr (norm_ty a, norm_ty b)
+  | TMod (MRel (l, d), a) -> TMod (MRel (l, norm_eff_ext d), norm_ty a)
+  | TMod (MAbs eps, a) ->
+    TMod (MAbs (norm_eff_ctx eps), norm_ty a)
+  | ECtx eps ->
+    match norm_eff_ctx eps with
+    | ([], Some (a, [])) -> a
+    | e -> ECtx e
+and norm_eff_ext d =
+  List.map (fun ({ eff_args; _ } as e) ->
+      { e with eff_args = Array.map norm_ty eff_args }) d
+and norm_eff_ctx (d, eps) = match eps with
+  | Some (ECtx e, l) ->
+    norm_eff_ctx (extend (norm_eff_ext d) (remove_labels e l))
+  | eps -> norm_eff_ext d, eps
+
 let eq_mask l l' =
   List.sort compare l = List.sort compare l'
 
@@ -95,7 +117,7 @@ let rec sub_eff d d' =
       Array.for_all2 eq_ty eff_args eff_args' && sub_eff tl d'
 
 and eq_ty a b = a == b ||
-  match a, b with
+  match norm_ty a, norm_ty b with
   | TVar v, TVar v' -> Bindlib.eq_vars v v'
   | TCon (c, l), TCon (c', l') ->
     c = c' && Array.for_all2 eq_ty l l'
@@ -220,25 +242,3 @@ let subst b e =
     | eps -> eff_ext d, eps
   in
   ty a
-
-let rec norm_ty = function
-  | TVar a -> TVar a
-  | TCon (s, a) -> TCon (s, Array.map norm_ty a)
-  | TForA (k, b) ->
-    let v, a = Bindlib.unbind b in
-    Bindlib.(bind_var v (box_type (norm_ty a)) |> tfora_ k |> unbox)
-  | TArr (a, b) -> TArr (norm_ty a, norm_ty b)
-  | TMod (MRel (l, d), a) -> TMod (MRel (l, norm_eff_ext d), norm_ty a)
-  | TMod (MAbs eps, a) ->
-    TMod (MAbs (norm_eff_ctx eps), norm_ty a)
-  | ECtx eps ->
-    match norm_eff_ctx eps with
-    | ([], Some (a, [])) -> a
-    | e -> ECtx e
-and norm_eff_ext d =
-  List.map (fun ({ eff_args; _ } as e) ->
-      { e with eff_args = Array.map norm_ty eff_args }) d
-and norm_eff_ctx (d, eps) = match eps with
-  | Some (ECtx e, l) ->
-    norm_eff_ctx (extend (norm_eff_ext d) (remove_labels e l))
-  | eps -> norm_eff_ext d, eps

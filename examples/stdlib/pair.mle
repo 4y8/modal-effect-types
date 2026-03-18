@@ -1,0 +1,13 @@
+type pair a b = Pair of a, b
+
+val fst : forall a b . [](a * b -> a)
+let fst p =
+  match p with
+  | (a, _) -> a
+  end
+
+val snd : forall a b . [](a * b -> b)
+let snd p =
+  match p with
+  | (_, b) -> b
+  end

@@ -23,7 +23,7 @@ and ty_arrow ctx fmt = function
 
 and ty_app ctx fmt = function
   | TCon (c, arr) when Array.length arr > 0 ->
-    fprintf fmt "%s %a" c (pp_print_array (ty_atom ctx)) arr
+    fprintf fmt "%s %a" c (pp_print_array ~pp_sep:(fun fmt () -> fprintf fmt " ") (ty_atom ctx)) arr
   | a -> ty_atom ctx fmt a
 and ty_atom ctx fmt = function
   | TVar v ->
@@ -36,7 +36,7 @@ and ty_atom ctx fmt = function
   | a -> fprintf fmt "(%a)" (ty_fora ctx) a
 
 and eff ctx fmt {eff_name; eff_args} =
-  fprintf fmt "%s %a" eff_name (pp_print_array (ty_atom ctx)) eff_args
+  fprintf fmt "%s %a" eff_name (pp_print_array ~pp_sep:(fun fmt () -> fprintf fmt ", ") (ty_atom ctx)) eff_args
 and eff_ext ctx =
   pp_print_list ~pp_sep:(fun fmt () -> fprintf fmt ", ") (eff ctx)
 and eff_ctx ctx fmt (d, eps) =

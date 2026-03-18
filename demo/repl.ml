@@ -9,8 +9,11 @@ let repl_from_file f =
           Core.Error.error_str_lexbuf lb
             (Printf.sprintf "Unexpected token: \"%s\"" (Lexing.lexeme lb)) in
   close_in ic;
-  let ctx = Core.Eval.eval_prog (Core.Type.check_prog p) in
-  let infer = match Core.Eval.SMap.find "infer_top_level" ctx with
+  let tctx, p = Core.Type.(check_prog init_ctx p) in
+  let ectx = ref (Core.Eval.build_stdlib_map tctx) in
+  Core.Eval.eval_prog ectx p;
+  let infer =
+    match Core.Eval.VMap.find (List.assoc "infer_top_level" tctx.id) !ectx with
     | VClo f -> f
     | _ -> failwith "internal error" in
   let rec loop () =
@@ -24,9 +27,9 @@ let repl_from_file f =
         _ ->
           Core.Error.error_str_lexbuf lb
             (Printf.sprintf "Unexpected token: \"%s\"" (Lexing.lexeme lb)) in
-    
+
     begin
-      try print_endline (Core.Eval.show_value (infer p))
+      try Format.printf "%a@." Core.Eval.pp_value (infer p)
       with
         Core.Eval.Fail -> ()
     end;

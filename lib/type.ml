@@ -438,7 +438,7 @@ let check_decl (ctx, prog) d = match d with
                ; gamma = List.map (fun (v, k) -> BType (v, k)) alphas @
                          ctx.gamma }
     in
-    let _ = check ctx' e g ([], None) in ctx, (x, e) :: prog
+    let m = check ctx' e g ([], None) in ctx, (v, m) :: prog
   | (x, SDEff (args, l)), _ ->
     (* add mock definition in the context just for type verification *)
     let eargs = snd (List.split args) in
@@ -488,5 +488,5 @@ let init_ctx, _ =
      ("fail", abs (TForA (Any, Bindlib.(unit @-> (TVar v) |> box_type |> bind_var v |> unbox))));
      ("print", abs (string @-> unit))]
 
-let check_prog =
-  Fun.compose snd (List.fold_left check_decl (init_ctx, []))
+let check_prog ctx =
+  List.fold_left check_decl (ctx, [])

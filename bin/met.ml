@@ -17,7 +17,7 @@ let open_file f tctx ectx =
         _ ->
         Core.Error.error_str_lexbuf lb
           (Printf.sprintf "Unexpected token: \"%s\"" (Lexing.lexeme lb)) in
-    let tctx, p = check_prog tctx p in
+    let p, tctx = check_prog tctx p in
     Core.Eval.eval_prog ectx p;
     close_in ic;
     tctx
@@ -41,7 +41,7 @@ let repl () =
       in
       match tl with
       | TLExpr m ->
-        let m, a = infer ctx m ([], None) in
+        let (m, a), _ = infer m ([], None) ctx in
         let v = Core.Eval.eval ectx m in
         Format.printf "- : %a = %a@." Core.Pprint.ty a Core.Eval.pp_value v;
         loop ctx
@@ -52,12 +52,12 @@ let repl () =
             let a, v, m, ctx =
               match List.assoc_opt x ctx.id with
               | Some v ->
-                let _, a, _ = Core.Context.(get_type_context ctx.gamma v) in
-                let m = check ctx m a ([], None) in
+                let (_, a, _), _ = Core.Context.get_type_context v ctx in
+                let m, _ = check m a ([], None) ctx in
                 a, v, m, ctx
               | None ->
-                let m, a = infer ctx m ([], None) in
-                let ctx, v = Core.Context.fresh_var ctx x a in
+                let (m, a), _ = infer m ([], None) ctx in
+                let v, ctx = Core.Context.fresh_var x a ctx in
                 a, v, m, ctx
             in
             let vf = Core.Eval.eval ectx m in
@@ -65,7 +65,7 @@ let repl () =
             Format.printf "val %s : %a = %a@." x Core.Pprint.ty a
               Core.Eval.pp_value vf;
             ctx
-          | _ -> fst (check_decl (ctx, []) (d, None))
+          | _ -> snd (check_decl ([], ctx) (d, None))
         in
         loop ctx
     with
@@ -100,6 +100,7 @@ let () =
   let spec_list =
     [("--eval", Arg.Set eval, "Evaluate the program (needs a main function)")]
   in
+  Format.set_margin 80;
   Arg.parse spec_list read_file "";
   if !launch_repl then
     ignore (repl ())

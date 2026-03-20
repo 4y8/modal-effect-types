@@ -218,28 +218,3 @@ let join_mod m m' f = match m, m' with
       if sub_mod m mu f && sub_mod m' mu f then
         Some mu
       else None
-
-let subst b e =
-  let a = Bindlib.subst b (ECtx e) in
-  let rec ty = function
-    | TVar a -> TVar a
-    | TCon (s, a) -> TCon (s, Array.map ty a)
-    | TForA (k, b) ->
-      let v, a = Bindlib.unbind b in
-      Bindlib.(bind_var v (box_type (ty a)) |> tfora_ k |> unbox)
-    | TArr (a, b) -> TArr (ty a, ty b)
-    | TMod (MRel (l, d), a) -> TMod (MRel (l, eff_ext d), ty a)
-    | TMod (MAbs eps, a) -> TMod (MAbs (eff_ctx eps), ty a)
-    | ECtx eps ->
-      match eff_ctx eps with
-      | ([], Some (a, [])) -> a
-      | e -> ECtx e
-  and eff_ext d =
-    List.map (fun ({ eff_args; _ } as e) ->
-        { e with eff_args = Array.map ty eff_args }) d
-
-  and eff_ctx (d, eps) = match eps with
-    | Some (ECtx e, l) -> extend (eff_ext d) (remove_labels e l)
-    | eps -> eff_ext d, eps
-  in
-  ty a

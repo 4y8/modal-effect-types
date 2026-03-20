@@ -1,0 +1,4 @@
+eff gen = yield : int => int
+
+val id : [](<>(int -> int) -> <gen>(int -> int))
+let id f = f

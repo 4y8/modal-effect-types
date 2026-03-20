@@ -40,6 +40,10 @@ eff co (e : Effect)
   = fork : [co e, e]{unit} => unit
   | suspend : unit => unit
 
+eff co
+  = fork : {unit} => unit
+  | suspend : unit => unit
+
 eff queue [s]
   = enqueue : s => unit
   | dequeue : unit => option s
@@ -124,6 +128,22 @@ let runList c =
     | Cons (Proc2 (f), tl) -> f tl
     end
   end
+
+-- val test : [](int -> [[queue int]co, queue int]{unit})
+
+-- <x : co, y as a, e|x as a, e>
+
+-- val test : [](int -> [x: co [queue int], q: queue int]{unit})
+-- let test n =
+--   if n = 0 then
+--     fun () -> q#enqueue 1;
+--     ()
+--   else
+--     {print (string_of_int n);
+--      x#fork (test (n - 1));
+--     print (string_of_int n);
+--     x#suspend ();
+--     print (string_of_int n)}
 
 val test : [](int -> [co [queue int], queue int]{unit})
 let test n =

@@ -9,7 +9,7 @@ let repl_from_file f =
           Core.Error.error_str_lexbuf lb
             (Printf.sprintf "Unexpected token: \"%s\"" (Lexing.lexeme lb)) in
   close_in ic;
-  let tctx, p = Core.Type.(check_prog init_ctx p) in
+  let p, tctx = Core.Type.(check_prog init_ctx p) in
   let ectx = ref (Core.Eval.build_stdlib_map tctx) in
   Core.Eval.eval_prog ectx p;
   let infer =

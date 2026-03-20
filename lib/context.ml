@@ -4,6 +4,7 @@ type 'a ctx_binding
   = Lock of concrete_mod
   | BVar of 'a Bindlib.var * pure_type
   | BType of tvar * kind
+  | Marker
 
 type eff =
   { eargs : kind list ; eops : (pure_type, op list) Bindlib.mbinder }
@@ -21,51 +22,176 @@ type 'a ctx =
 let (<:) ({gamma; _} as ctx) b =
   { ctx with gamma = b :: gamma }
 
-let rec get_var_kind gamma x = match gamma with
-  | [] -> failwith "get_kind: internal error"
+let bind f g = fun ctx ->
+  let a, ctx = f ctx in
+  g a ctx
+
+let (let*) = bind
+
+let (>>) f g =
+  let* () = f in
+  g
+
+let return x = fun ctx -> x, ctx
+
+let ($>) x f =
+  let* x = x in
+  return (f x)
+
+let (|||) a b =
+  let* a = a in
+  if a then
+    return true
+  else b
+
+let unless c f =
+  let* c = c in
+  if c then
+    return ()
+  else
+    f ()
+
+module M = struct
+  module List = struct
+    let rec map f = function
+      | [] -> return []
+      | hd :: tl ->
+        let* x = f hd in
+        let* xs = map f tl in
+        return (x :: xs)
+
+
+    let rec map2 f l l' = match l, l' with
+      | [], [] -> return []
+      | hd :: tl, hd' :: tl' ->
+        let* x = f hd hd' in
+        let* xs = map2 f tl tl' in
+        return (x :: xs)
+      | _, _ -> failwith "internal error: map2"
+
+    let rec iter f = function
+      | [] -> return ()
+      | hd :: tl -> f hd >> iter f tl
+
+    let rec fold_right f l acc = match l with
+      | [] -> return acc
+      | hd :: tl -> let* tl = fold_right f tl acc in
+        f hd tl
+
+    let rec fold_left f acc = function
+      | [] -> return acc
+      | hd :: tl ->
+        let* acc = f acc hd in
+        fold_left f acc tl
+
+    let rec for_all f = function
+      | [] -> return true
+      | hd :: tl ->
+        let* c = f hd in
+        if c then
+          for_all f tl
+        else
+          return false
+  end
+
+  module Array = struct
+    let for_all f a =
+      let n = Array.length a in
+      let rec aux i =
+        if i = n then return true
+        else
+          let* c =  f a.(i) in
+          if c then aux (i + 1)
+          else return false
+      in aux 0
+  end
+end
+
+let get_data c ctx =
+  List.assoc c ctx.data, ctx
+
+let lookup_data c ctx =
+  List.assoc_opt c ctx.data, ctx
+
+let lookup_tid x ctx =
+  List.assoc_opt x ctx.tid, ctx
+
+let lookup_id x ctx =
+  List.assoc_opt x ctx.id, ctx
+
+let get_eff e ctx =
+  List.assoc e ctx.effects, ctx
+
+let lookup_eff e ctx =
+  List.assoc_opt e ctx.effects, ctx
+
+let add_binding b = fun ctx ->
+  (), ctx <: b
+
+let rec drop_marker = function
+  | [] -> failwith "drop_marker: internal error"
+  | Marker :: tl -> tl
+  | _ :: tl -> drop_marker tl
+
+let protect_context f = fun ctx ->
+  let id = ctx.id in
+  let tid = ctx.tid in
+  let ctx = ctx <: Marker in
+  let a, ctx = f ctx in
+  a, { ctx with gamma = drop_marker ctx.gamma; id; tid }
+
+let with_binding b f =
+  protect_context @@ (add_binding b >> f)
+
+let get_var_kind x ({gamma; _} as ctx) =
+  let rec get_var_kind = function
+  | [] -> failwith "get_var_kind: internal error"
   | BType (y, k) :: _ when Bindlib.eq_vars x y -> k
-  | _ :: tl -> get_var_kind tl x
+  | _ :: tl -> get_var_kind tl
+  in get_var_kind gamma, ctx
 
 (* Section 4.4 *)
 
-let rec get_kind ?(seen_adt=[]) ctx = function
-  | TMod (MAbs _, _) -> Abs
-  | TMod (MRel _, a) -> get_kind ~seen_adt ctx a
-  | TArr (_, _) -> Any
-  | TVar v -> get_var_kind ctx.gamma v
+let rec get_kind ?(seen_adt=[]) = function
+  | TMod (MAbs _, _) -> return Abs
+  | TMod (MRel _, a) -> get_kind ~seen_adt a
+  | TArr (_, _) -> return Any
+  | TVar v -> get_var_kind v
   | TForA (k, a) ->
-    let v, a = Bindlib.unbind a in get_kind ~seen_adt (ctx <: BType (v, k)) a
-  | TCon (s, _) when List.mem s seen_adt -> Abs
-  | TCon (s, arr) ->
-    let seen_adt = s :: seen_adt in
-    let {cons; _} = List.assoc s ctx.data in
+    let v, a = Bindlib.unbind a in
+    with_binding (BType (v, k)) @@
+    get_kind ~seen_adt  a
+  | TCon (c, _) when List.mem c seen_adt -> return Abs
+  | TCon (c, arr) ->
+    let seen_adt = c :: seen_adt in
+    let* {cons; _} = get_data c in
     let types = List.map (fun (_, b) -> Bindlib.msubst b arr) cons |>
       List.flatten in
-    if List.for_all (fun a ->
-        get_kind ~seen_adt ctx a = Abs) types then
-      Abs
-    else
-      Any
-  | ECtx _ -> Effect
+    let* abs = M.List.for_all
+        (fun a -> get_kind ~seen_adt a $> (=) Abs) types in
+    if abs then return Abs
+    else return Any
+  | ECtx _ -> return Effect
 
-let is_abs ctx a =
-  get_kind ctx a = Abs
+let is_abs a =
+  get_kind a $> (=) Abs
 
-let is_type ctx a =
-  get_kind ctx a <> Effect
+let is_type a =
+  get_kind a $> (<>) Effect
 
 let rec get_guarded = function
   | TMod (mu, t) -> let nu, g = get_guarded t in
     Effects.compose mu nu, g
   | g -> Effects.id, g
 
-let across ctx a nu f =
-  if is_abs ctx a then Some a
+let across a nu f =
+  let* c = is_abs a in
+  if c then return (Some a)
   else
     let mu, g = get_guarded a in
     match Effects.right_residual nu mu f with
-    | Some xi -> Some (TMod (xi, g))
-    | _ -> None
+    | Some xi -> return @@ Some (TMod (xi, g))
+    | _ -> return None
 
 let rec locks e = function
   | [] -> Effects.id, e
@@ -74,33 +200,35 @@ let rec locks e = function
     Effects.compose m' m, f
   | _ :: tl -> locks e tl
 
-let rec get_type_context gamma x = match gamma with
-  | [] -> failwith "get_type_context: internal error"
-  | BVar (y, a) :: gamma when Bindlib.eq_vars x y -> gamma, a, []
-  | hd :: tl ->
-    let gamma, a, gamma' = get_type_context tl x in
-    gamma, a, hd :: gamma'
+let get_type_context x ({gamma; _} as ctx) =
+  let rec get_type_context gamma x = match gamma with
+    | [] -> failwith "get_type_context: internal error"
+    | BVar (y, a) :: gamma when Bindlib.eq_vars x y -> gamma, a, []
+    | hd :: tl ->
+      let gamma, a, gamma' = get_type_context tl x in
+      gamma, a, hd :: gamma'
+  in get_type_context gamma x, ctx
 
-let fresh_tvar ({gamma; tid; _} as ctx) x k =
+let fresh_tvar x k ({gamma; tid; _} as ctx) =
   let v = Bindlib.new_var (fun v -> TVar v) x in
-  { ctx with gamma = BType (v, k) :: gamma; tid = (x, v) :: tid }, v
+  v, { ctx with gamma = BType (v, k) :: gamma; tid = (x, v) :: tid }
 
-let fresh_tvars ctx args =
-    let ctx, vars =
-      List.fold_right (fun (x, k) (ctx, vars) ->
-          Pair.map_snd (fun v -> v :: vars) @@ fresh_tvar ctx x k)
-        args (ctx, []) in
-    let mvar = Array.of_list vars in
-    ctx, mvar
+let fresh_tvars args ctx =
+  let vars, ctx =
+    List.fold_right (fun (x, k) (vars, ctx) ->
+        Pair.map_fst (fun v -> v :: vars) @@ fresh_tvar x k ctx)
+      args ([], ctx) in
+  let mvar = Array.of_list vars in
+  mvar, ctx
 
-let fresh_var ({gamma; id; _} as ctx) x a =
+let fresh_var x a ({gamma; id; _} as ctx) =
   let v = Bindlib.new_var (fun v -> Var v) x in
-  { ctx with gamma = BVar (v, a) :: gamma; id = (x, v) :: id }, v
+  v, { ctx with gamma = BVar (v, a) :: gamma; id = (x, v) :: id }
 
-let fresh_vars ctx args =
-    let ctx, vars =
-      List.fold_right (fun (x, t) (ctx, vars) ->
-          Pair.map_snd (fun v -> v :: vars) @@ fresh_var ctx x t)
-        args (ctx, []) in
-    let mvar = Array.of_list vars in
-    ctx, mvar
+let fresh_vars args ctx =
+  let vars, ctx =
+    List.fold_right (fun (x, t) (vars, ctx) ->
+        Pair.map_fst (fun v -> v :: vars) @@ fresh_var x t ctx)
+      args ([], ctx) in
+  let mvar = Array.of_list vars in
+  mvar, ctx

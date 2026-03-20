@@ -23,7 +23,7 @@ jobs:
       - name: Build everything
         run: |
           opam install --yes dune menhir bindlib ppx_deriving
-          dune build
+          opam exec dune build
 
       - name: Run the tests
         run: |

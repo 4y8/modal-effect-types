@@ -1,0 +1,30 @@
+name: CI for tests
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Install OCaml (for the reference interpreter)
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: 5.4.x
+
+      - name: Build everything
+        run: |
+          opam install --yes dune menhir bindlib ppx_deriving
+          dune build
+
+      - name: Run the tests
+        run: |
+          cd tests && ./test.sh ../bin/met.exe

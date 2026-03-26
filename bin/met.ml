@@ -41,7 +41,9 @@ let repl () =
       in
       match tl with
       | TLExpr m ->
-        let (m, a), _ = infer m ([], None) ctx in
+        let (a, m), _ =
+            Core.Frost.finfer (Infer Ghost) m ctx
+        in
         let v = Core.Eval.eval ectx m in
         Format.printf "- : %a = %a@." Core.Pprint.ty a Core.Eval.pp_value v;
         loop ctx
@@ -53,10 +55,10 @@ let repl () =
               match List.assoc_opt x ctx.id with
               | Some v ->
                 let (_, a, _), _ = Core.Context.get_type_context v ctx in
-                let m, _ = check m a ([], None) ctx in
+                let (_, m), _ = Core.Frost.finfer (Check a) m ctx in
                 a, v, m, ctx
               | None ->
-                let (m, a), _ = infer m ([], None) ctx in
+                let (a, m), _ = Core.Frost.finfer (Infer Ghost) m ctx in
                 let v, ctx = Core.Context.fresh_var x a ctx in
                 a, v, m, ctx
             in
@@ -95,10 +97,9 @@ let read_file f =
     | VClo f -> ignore (f (VCon ("Unit", [])))
     | _ -> failwith "main should be a function"
 
-
 let () =
   let spec_list =
-    [("--eval", Arg.Set eval, "Evaluate the program (needs a main function)")]
+    [ ("--eval", Arg.Set eval, "Evaluate the program (needs a main function)") ]
   in
   Format.set_margin 80;
   Arg.parse spec_list read_file "";

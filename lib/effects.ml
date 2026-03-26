@@ -78,7 +78,11 @@ let right_residual mu nu f =
       Some (MRel (erase_types d' @ (mask_diff l l'), d @ f))
 
 let rec norm_ty = function
-  | TVar a -> TVar a
+  | TVar v-> TVar v
+  | Ghost -> Ghost
+  | MFlex v -> MFlex v
+  | PFlex v -> PFlex v
+  | UGhost p -> UGhost (norm_ty p)
   | TCon (s, a) -> TCon (s, Array.map norm_ty a)
   | TForA (k, b) ->
     let v, a = Bindlib.unbind b in

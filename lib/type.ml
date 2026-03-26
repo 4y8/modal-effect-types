@@ -4,7 +4,7 @@ open Errors
 
 let rec is_val = function
   | SVar _ -> true
-  | SLam (_, _) -> true
+  | SLam _ -> true
   | SAnn (m, _)
   | SAppT (m, _) -> is_val m.sexpr
   | SCons (_, l) -> List.for_all (fun {sexpr; _} -> is_val sexpr) l
@@ -209,13 +209,13 @@ let rec check ({loc; sexpr} as m) a e =
     with_binding (BType (v, k)) @@ check m a e
 
   (* B-Abs *)
-  | SLam (x, m), TArr (a, b) ->
+  | SLam (x, None, m), TArr (a, b) ->
     protect_context @@
     let* v = fresh_var x a in
     let* m = check m b e in
-    return @@ Lam (a, Bindlib.(box_expr m |> bind_var v |> unbox))
+    return @@ Lam (Bindlib.(box_expr m |> bind_var v |> unbox))
 
-  | SLam (_, _), a ->
+  | SLam _, a ->
     function_non_arr loc a
 
   (* B-MaskCheck *)

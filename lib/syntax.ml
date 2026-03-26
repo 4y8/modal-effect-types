@@ -34,7 +34,7 @@ type surface_desc
   | SVar of string
   | SInt of int
   | SStr of string
-  | SLam of string * surface_expr
+  | SLam of string * surface_type option * surface_expr
   | SApp of surface_expr * surface_expr
   | SAnn of surface_expr * surface_type
   | SSeq of surface_expr * surface_expr
@@ -45,6 +45,7 @@ type surface_desc
              surface_handler
   | SCons of string * surface_expr list
   | SMatch of surface_expr * (surface_pat * surface_expr) list
+  | SFreeze of surface_expr
 and surface_expr = { sexpr : surface_desc ; loc : loc }
 
 and surface_handler = (string * (loc * string * string * surface_expr)) list *
@@ -61,13 +62,6 @@ type surface_top_level
   = TLDecl of (string * surface_decl)
   | TLExpr of surface_expr
   | TLOpen of string
-
-(* uncomment for debugging
-open Bindlib
-
-let pp_var _ _  _ = ()
-let pp_binder _ _ _ _ = ()
-*)
 
 type pure_mod
   = MAbs of effect_ctx
@@ -87,6 +81,10 @@ and pure_type
   | TCon of string * pure_type array
   | ECtx of effect_ctx
   | TForA of kind * (pure_type, pure_type) Bindlib.binder
+  | Ghost
+  | UGhost of pure_type
+  | MFlex of tvar
+  | PFlex of tvar
 
 and tvar = pure_type Bindlib.var
 
@@ -108,6 +106,12 @@ let mabs_ = Bindlib.box_apply (fun e -> MAbs e)
 
 let ectx_ = Bindlib.box_apply (fun e -> ECtx e)
 
+let ughost_ = Bindlib.box_apply (fun p -> UGhost p)
+
+let mflex_ = Bindlib.box_var
+
+let pflex_ = Bindlib.box_var
+
 let rec box_type = function
   | TVar v -> tvar_ v
   | TMod (m, a) -> tmod_ (box_mod m) (box_type a)
@@ -115,6 +119,10 @@ let rec box_type = function
   | TCon (c, l) -> tcon_ c (Array.map box_type l)
   | TForA (k, a) -> tfora_ k (Bindlib.box_binder box_type a)
   | ECtx e -> ectx_ (box_effect_ctx e)
+  | Ghost -> Bindlib.box Ghost
+  | UGhost p -> ughost_ (box_type p)
+  | MFlex v -> mflex_ v
+  | PFlex v -> pflex_ v
 
 and box_effect_ext d =
   let pure_effect_ eff_name args = Bindlib.box_apply
@@ -159,7 +167,7 @@ type expr
   = Do of string * expr
   | Var of var
   | Lit of lit
-  | Lam of pure_type * (expr, expr) Bindlib.binder
+  | Lam of (expr, expr) Bindlib.binder
   | App of expr * expr
   | Let of expr * pure_type * (expr, expr) Bindlib.binder
   | Con of string * expr list
@@ -183,7 +191,7 @@ let var_ = Bindlib.box_var
 
 let lit_ l = Bindlib.box (Lit l)
 
-let lam_ = Bindlib.box_apply2 (fun a m -> Lam (a, m))
+let lam_ = Bindlib.box_apply (fun m -> Lam m)
 
 let app_ = Bindlib.box_apply2 (fun m n -> App (m, n))
 
@@ -217,7 +225,7 @@ let rec box_expr = function
   | Val v -> Bindlib.box (Val v)
   | Var v -> var_ v
   | Lit l -> lit_ l
-  | Lam (a, m) -> lam_ (box_type a) (Bindlib.box_binder box_expr m)
+  | Lam m -> lam_ (Bindlib.box_binder box_expr m)
   | App (m, n) -> app_ (box_expr m) (box_expr n)
   | Let (m, a, n) ->
     let_ (box_expr m) (box_type a) (Bindlib.box_binder box_expr n)

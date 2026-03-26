@@ -64,7 +64,7 @@ let rec eval ctx = function
       | Some v -> v
       | None -> Error.error_str None "missing a definition"
     end
-  | Lam (_, m) ->
+  | Lam m ->
     VClo (fun v -> eval ctx (Bindlib.subst m (Val v)))
   | App (m, n) ->
     begin match eval ctx m with

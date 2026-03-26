@@ -1,11 +1,15 @@
 open Syntax
 
+let counter = ref 0
+
 type 'a ctx_binding
   = Lock of concrete_mod
   | BVar of 'a Bindlib.var * pure_type
   | BType of tvar * kind
   | Marker
 
+  | BMFlex of tvar * pure_type option * kind
+  | BPFlex of tvar * pure_type * kind
 type eff =
   { eargs : kind list ; eops : (pure_type, op list) Bindlib.mbinder }
 
@@ -44,12 +48,22 @@ let (|||) a b =
     return true
   else b
 
+let (&&&) a b =
+  let* a = a in
+  if a then
+    b
+  else return false
+
 let unless c f =
   let* c = c in
   if c then
     return ()
   else
     f ()
+
+let (@>) f g =
+  let* x = f in
+  g x
 
 module M = struct
   module List = struct
@@ -128,10 +142,22 @@ let lookup_eff e ctx =
 let add_binding b = fun ctx ->
   (), ctx <: b
 
+let replace_bindings gamma = fun ctx ->
+  (), { ctx with gamma }
+
+let add_bindings gamma' = fun ({ gamma ; _} as ctx) ->
+  (), { ctx with gamma = gamma' @ gamma }
+
 let rec drop_marker = function
   | [] -> failwith "drop_marker: internal error"
   | Marker :: tl -> tl
   | _ :: tl -> drop_marker tl
+
+let rec split_marker = function
+  | [] -> failwith "split_marker: internal error"
+  | Marker :: tl -> [], tl
+  | hd :: tl -> let l, r = split_marker tl in
+    hd :: l, r
 
 let protect_context f = fun ctx ->
   let id = ctx.id in
@@ -140,15 +166,43 @@ let protect_context f = fun ctx ->
   let a, ctx = f ctx in
   a, { ctx with gamma = drop_marker ctx.gamma; id; tid }
 
+let get_suffix f = fun ctx ->
+  let id = ctx.id in
+  let tid = ctx.tid in
+  let ctx = ctx <: Marker in
+  let a, ctx = f ctx in
+  let suffix, gamma = split_marker ctx.gamma in
+  (a, suffix), { ctx with gamma; id; tid }
+
 let with_binding b f =
   protect_context @@ (add_binding b >> f)
 
 let get_var_kind x ({gamma; _} as ctx) =
   let rec get_var_kind = function
   | [] -> failwith "get_var_kind: internal error"
+  | BPFlex (y, _, k) :: _
+  | BMFlex (y, _, k) :: _
   | BType (y, k) :: _ when Bindlib.eq_vars x y -> k
   | _ :: tl -> get_var_kind tl
   in get_var_kind gamma, ctx
+
+let rec get_pflex_def_ x = function
+  | [] -> failwith "get_pflex_def_: internal error"
+  | BPFlex (y, p, _) :: _ when Bindlib.eq_vars x y -> p
+  | _ :: tl -> get_pflex_def_ x tl
+
+let get_pflex_def x ({gamma; _} as ctx) =
+  get_pflex_def_ x gamma, ctx
+
+let rec get_pflex_split_ x = function
+  | [] -> failwith "get_pflex_split_: internal error"
+  | BPFlex (y, p, k) :: tl when Bindlib.eq_vars x y -> [], (p, k), tl
+  | hd :: tl ->
+    let g, p, g' = get_pflex_split_ x tl in
+    hd :: g, p, g'
+
+let get_pflex_split x ({gamma; _} as ctx) =
+  get_pflex_split_ x gamma, ctx
 
 (* Section 4.4 *)
 
@@ -156,7 +210,11 @@ let rec get_kind ?(seen_adt=[]) = function
   | TMod (MAbs _, _) -> return Abs
   | TMod (MRel _, a) -> get_kind ~seen_adt a
   | TArr (_, _) -> return Any
+  | Ghost -> return Any
+  | PFlex v
+  | MFlex v
   | TVar v -> get_var_kind v
+  | UGhost p -> get_kind p
   | TForA (k, a) ->
     let v, a = Bindlib.unbind a in
     with_binding (BType (v, k)) @@
@@ -209,7 +267,7 @@ let get_type_context x ({gamma; _} as ctx) =
       gamma, a, hd :: gamma'
   in get_type_context gamma x, ctx
 
-let fresh_tvar x k ({gamma; tid; _} as ctx) =
+let fresh_tvar x k ({ gamma; tid; _ } as ctx) =
   let v = Bindlib.new_var (fun v -> TVar v) x in
   v, { ctx with gamma = BType (v, k) :: gamma; tid = (x, v) :: tid }
 
@@ -221,7 +279,7 @@ let fresh_tvars args ctx =
   let mvar = Array.of_list vars in
   mvar, ctx
 
-let fresh_var x a ({gamma; id; _} as ctx) =
+let fresh_var x a ({ gamma; id; _ } as ctx) =
   let v = Bindlib.new_var (fun v -> Var v) x in
   v, { ctx with gamma = BVar (v, a) :: gamma; id = (x, v) :: id }
 
@@ -232,3 +290,8 @@ let fresh_vars args ctx =
       args ([], ctx) in
   let mvar = Array.of_list vars in
   mvar, ctx
+
+let fresh_mflex k ctx =
+  incr counter;
+  let v = Bindlib.new_var (fun v -> MFlex v) (Printf.sprintf "x%d" !counter) in
+  v, ctx <: BMFlex (v, None, k)

@@ -6,7 +6,7 @@ let fresh_name =
   fun () -> (incr k; Printf.sprintf "x%d" !k)
 
 let wrap_lam =
-  List.fold_right (fun (x, loc) e -> { loc; sexpr = SLam (x, e) })
+  List.fold_right (fun ((x, t), loc) e -> { loc; sexpr = SLam (x, t, e) })
 
 let wrap_type =
   List.fold_right (fun (x, k, tloc) t -> { tloc; stype = STForA (x, k, t) })
@@ -31,6 +31,8 @@ let mask_of_seffs = List.map (function { seff_name ; eloc ; seff_args = [] } -> 
 
 let stprod (a, b) = STCons ("pair", [a; b])
 let spair (a, b) = SCons ("Pair", [a; b])
+
+let stunit = { stype = STCons ("unit", []); tloc = None }
 %}
 
 %token EOF
@@ -41,7 +43,7 @@ let spair (a, b) = SCons ("Pair", [a; b])
 %token HANDLE DO WITH RETURN EFF FUN TYPE IF THEN ELSE FORALL MATCH MASK LET
 %token IN END VAL OF EFFECT OPEN
 %token PLUS MINUS TIMES AND CARET DSCOL
-%token LANGLE RANGLE LSQUARE RSQUARE LCURLY RCURLY LPAR RPAR
+%token LANGLE RANGLE LSQUARE RSQUARE LCURLY RCURLY LPAR RPAR LFREEZE RFREEZE
 %token COMMA PIPE ARROW DARROW DOT DCOL EQU WILDCARD AT SCOL BANG
 %token UNIT
 
@@ -87,7 +89,7 @@ let atom_type :=
   | LPAR; ~ = stype; RPAR; <>
   | loc_type (
     | LCURLY; t = stype; RCURLY;
-    { STArr ({stype = STCons ("unit", []); tloc = None}, t) }
+    { STArr (stunit, t) }
     | LSQUARE; ~ = separated_list(COMMA, seff); RSQUARE ; <SECtx>
     | ~ = IDENT; <STVar>)
 
@@ -142,7 +144,7 @@ let pattern :=
     { { spat = p; ploc = Some ($startpos, $endpos) } }
 
 let handle_clause :=
-  | PIPE; l = string_loc; p = arg; r = IDENT; DARROW; n = sexpr;
+  | PIPE; l = string_loc; p = untyped_arg; r = IDENT; DARROW; n = sexpr;
     { (fst l, (snd l, p, r, n)) }
 
 let match_clause :=
@@ -156,8 +158,9 @@ let atom_expr :=
  | LPAR; ~ = sexpr; RPAR; <>
  | loc_expr(
    | LPAR; l = sexpr; COMMA; r = sexpr; RPAR; <spair>
-   | LCURLY; e = sexpr; RCURLY; { SLam ("", e) }
+   | LCURLY; e = sexpr; RCURLY; { SLam ("", Some stunit, e) }
    | ~ = IDENT; <SVar>
+   | LFREEZE; ~ = sexpr; RFREEZE; <SFreeze>
    | ~ = INT; <SInt>
    | ~ = STRING; <SStr>
    | MASK; LANGLE; ~ = separated_list(COMMA, string_loc); RANGLE; ~ = atom_expr;
@@ -165,7 +168,7 @@ let atom_expr :=
    | UNIT; { SCons ("Unit", []) }
    | HANDLE; LANGLE; d = separated_list (COMMA, seff); RANGLE; mu = smod*;
      ht = htype; m = sexpr; WITH;
-     PIPE; RETURN; p = arg; DARROW; n = sexpr;
+     PIPE; RETURN; p = untyped_arg; DARROW; n = sexpr;
      h = handle_clause*;
      END; { SHand (m, d, mu, ht, (h, (p, n))) }
    | MATCH; ~ = sexpr; WITH; ~ = match_clause*; END; <SMatch>)
@@ -215,8 +218,7 @@ let seq_expr :=
 
 let fun_expr :=
   | ~ = seq_expr; <>
-  | loc_expr(
-    | FUN; ~ = arg; ARROW; ~ = sexpr; <SLam>)
+  | FUN; args = arg_loc+; ARROW; m = sexpr; { wrap_lam args m }
 
 let sexpr :=
   | ~ = fun_expr; <>
@@ -239,13 +241,17 @@ decl_sig:
 ;
 
 let arg :=
-  | x = IDENT; { x }
-  | UNIT; { "" } (* sloppy *)
-  | BANG; { "" } (* sloppy *)
-  | WILDCARD; { "" }
+  | x = IDENT; { x, None }
+  | UNIT; { "", Some stunit }
+  | BANG; { "", Some stunit }
+  | WILDCARD; { "", None }
 
 let arg_loc :=
   | x = arg; { x, Some ($startpos, $endpos) }
+
+let untyped_arg :=
+  (* sloppy *)
+  | a = arg; { fst a }
 
 decl_fun:
   | LET x = IDENT args = arg_loc* EQU e = sexpr

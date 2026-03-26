@@ -6,7 +6,7 @@ exception Exit
 let err msg =
   Format.eprintf "@[<hov>\027[31;1mError\027[0m: ";
   msg err_formatter;
-  Format.eprintf "@].";
+  Format.eprintf "@]@.";
   raise Exit
 
 let error loc msg =

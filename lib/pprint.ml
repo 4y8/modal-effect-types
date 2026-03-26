@@ -15,6 +15,8 @@ let rec ty_fora ctx fmt = function
     let v, a, ctx = Bindlib.unbind_in ctx a in
     fprintf fmt "∀ %s : %a . %a" (Bindlib.name_of v) kind k
       (ty_fora ctx) a
+  | UGhost p ->
+    fprintf fmt "👻.%a" (ty_fora ctx) p
   | a -> ty_arrow ctx fmt a
 and ty_arrow ctx fmt = function
   | TArr (a, b) ->
@@ -23,16 +25,22 @@ and ty_arrow ctx fmt = function
 
 and ty_app ctx fmt = function
   | TCon (c, arr) when Array.length arr > 0 ->
-    fprintf fmt "%s %a" c (pp_print_array ~pp_sep:(fun fmt () -> fprintf fmt " ") (ty_atom ctx)) arr
+    fprintf fmt "%s %a" c
+      (pp_print_array ~pp_sep:(fun fmt () -> fprintf fmt " ") (ty_atom ctx)) arr
   | a -> ty_atom ctx fmt a
 and ty_atom ctx fmt = function
   | TVar v ->
     fprintf fmt "%s" (Bindlib.name_of v)
+  | MFlex v ->
+    fprintf fmt "ˆ%s" (Bindlib.name_of v)
+  | PFlex v ->
+    fprintf fmt "ˇ%s" (Bindlib.name_of v)
   | TCon (c, [||]) ->
     fprintf fmt "%s" c
   | TMod (mu, a) ->
     fprintf fmt "%a %a" (modality ctx) mu (ty_atom ctx) a
   | ECtx e -> fprintf fmt "[%a]" (eff_ctx ctx) e
+  | Ghost -> fprintf fmt "👻"
   | a -> fprintf fmt "(%a)" (ty_fora ctx) a
 
 and eff ctx fmt {eff_name; eff_args} =

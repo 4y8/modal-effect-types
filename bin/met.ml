@@ -41,9 +41,10 @@ let repl () =
       in
       match tl with
       | TLExpr m ->
-        let (a, m), _ =
+        let (a, m), ctx' =
             Core.Frost.finfer (Infer Ghost) m ctx
         in
+        let a = Core.Frost.subst_suffix ctx'.gamma a in
         let v = Core.Eval.eval ectx m in
         Format.printf "- : %a = %a@." Core.Pprint.ty a Core.Eval.pp_value v;
         loop ctx
@@ -58,7 +59,8 @@ let repl () =
                 let (_, m), _ = Core.Frost.finfer (Check a) m ctx in
                 a, v, m, ctx
               | None ->
-                let (a, m), _ = Core.Frost.finfer (Infer Ghost) m ctx in
+                let (a, m), ctx' = Core.Frost.finfer (Infer Ghost) m ctx in
+                let a = Core.Frost.subst_suffix ctx'.gamma a in
                 let v, ctx = Core.Context.fresh_var x a ctx in
                 a, v, m, ctx
             in

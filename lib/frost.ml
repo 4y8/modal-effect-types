@@ -23,12 +23,10 @@ let subst_var a b v =
   Bindlib.(subst (bind_var v (box_type a) |> unbox) b)
 
 let subst_suffix xi s =
-  let v, a = List.(filter_map (function
-      | BPFlex (a, p, _) -> Some (a, p)
-      | BMFlex (a, Some tau, _) ->Some (a, tau)
-      | _ -> None) xi |> split) in
-  Bindlib.(msubst (box_type s |> bind_mvar (Array.of_list v) |> unbox)
-             (Array.of_list a))
+  List.fold_left (fun t b -> match b with
+      | BPFlex (a, p, _) -> subst_var t p a
+      | BMFlex (a, Some tau, _) -> subst_var t tau a
+      | _ -> t) s xi
 
 let guess_mono =
   let rec aux l = function

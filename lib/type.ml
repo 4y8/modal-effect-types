@@ -286,7 +286,6 @@ let rec check ({loc; sexpr} as m) a e =
       match Effects.get_op li ops with
       | None -> unknown_eff loc li
       | Some (ai, bi) ->
-
         protect_context @@
         let* pi = fresh_var pi ai in
         let* ri = fresh_var ri (TMod (nu, TArr (bi, b))) in

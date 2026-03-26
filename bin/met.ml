@@ -3,8 +3,27 @@ open Core.Type
 
 let eval = ref false
 let launch_repl = ref true
+let verbose = ref false
 
 let open_file f tctx ectx =
+  let open Core.Context in
+  let check_decl (p, ctx) = function
+    | (x, SDFun m), _ ->
+      begin match List.assoc_opt x ctx.id with
+        | Some v ->
+          let (_, a, _), _ = get_type_context v ctx in
+          let (_, m), _ = Core.Frost.finfer (Check a) m ctx in
+          (v, m) :: p, ctx
+        | None ->
+          let (a, m), ctx' = Core.Frost.finfer (Infer Ghost) m ctx in
+          if !verbose then
+            Format.printf "%s : %a@." x Core.Pprint.ty a;
+          let a = Core.Frost.subst_suffix ctx'.gamma a in
+          let v, ctx = fresh_var x a ctx in
+          (v, m) :: p, ctx
+      end
+    | d -> check_decl (p, ctx) d
+  in
   try
     launch_repl := false;
     let ic = open_in f in
@@ -17,8 +36,9 @@ let open_file f tctx ectx =
         _ ->
         Core.Error.error_str_lexbuf lb
           (Printf.sprintf "Unexpected token: \"%s\"" (Lexing.lexeme lb)) in
-    let p, tctx = check_prog tctx p in
-    Core.Eval.eval_prog ectx p;
+    let p, tctx = List.fold_left check_decl ([], tctx) p in
+    if !eval || !launch_repl then
+      Core.Eval.eval_prog ectx p;
     close_in ic;
     tctx
   with
@@ -101,7 +121,8 @@ let read_file f =
 
 let () =
   let spec_list =
-    [ ("--eval", Arg.Set eval, "Evaluate the program (needs a main function)") ]
+    [ ("--eval", Arg.Set eval, "Evaluate the program (needs a main function)")
+    ; ("--verbose", Arg.Set verbose, "")]
   in
   Format.set_margin 80;
   Arg.parse spec_list read_file "";

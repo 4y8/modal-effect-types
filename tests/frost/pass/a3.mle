@@ -1,0 +1,10 @@
+type list a = Nil | Cons of a, list a
+
+val choose : forall a . a -> a -> a
+val ids : list (forall a . a -> a)
+val nil : forall a . list a
+
+let infer = choose nil ids
+
+val check : list (forall a . a -> a)
+let check = choose nil ids

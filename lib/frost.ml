@@ -353,9 +353,9 @@ let rec broom loc m n s = match m, n, s with
 
   (* SI-Check *)
   | Check a, Ty, t ->
-    let* ga = is_guarded a in
-    if ga then
-      unless (is_guarded t)
+    let* gt = is_guarded a in
+    if gt then
+      unless (is_guarded a)
         (fun () -> failwith "broom: SI-Check") >>
       let* _ = t =~ a in
       return a

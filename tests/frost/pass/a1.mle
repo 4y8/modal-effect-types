@@ -1,0 +1,4 @@
+let infer x y = y
+
+val check : forall a b . a -> b -> b
+let check x y = y

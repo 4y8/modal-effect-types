@@ -1,0 +1,7 @@
+val choose : forall a . a -> a -> a
+val id : forall a . a -> a
+
+let infer = choose id
+
+val check : (forall a . a -> a) -> (forall a . a -> a)
+let check = choose id

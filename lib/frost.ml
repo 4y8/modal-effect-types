@@ -291,9 +291,9 @@ let rec presub m p q = match p, q, m with
     prejoin p q
   | MFlex _ as p, q, Fun _ when is_guarded q [] ->
     p
-  | TForA (_, p), q, m ->
-    let _, p = Bindlib.unbind p in
-    presub m p q
+  | TForA (k, p), q, m ->
+    let v, p = Bindlib.unbind p in
+    Bindlib.(presub m p q |> box_type |> bind_var v |> tfora_ k |> unbox)
   | p, TForA (_, q), m ->
     let _, q = Bindlib.unbind q in
     presub m p q
@@ -327,7 +327,8 @@ let rec broom loc m n s = match m, n, s with
 
   (* SI-ForallL *)
   | (Fun _ | Check _), n, TForA (k, s) ->
-    let a' = Bindlib.new_var (fun v -> PFlex v) "alpha" in
+    incr counter;
+    let a' = Bindlib.new_var (fun v -> PFlex v) (Printf.sprintf "x%d" !counter) in
     add_binding (BPFlex (a', Ghost, k)) >>
     broom loc m n (Bindlib.subst s (PFlex a'))
 
@@ -353,7 +354,7 @@ let rec broom loc m n s = match m, n, s with
 
   (* SI-Check *)
   | Check a, Ty, t ->
-    let* gt = is_guarded a in
+    let* gt = is_guarded t in
     if gt then
       unless (is_guarded a)
         (fun () -> failwith "broom: SI-Check") >>
@@ -502,7 +503,6 @@ let rec sk_infer m { sexpr; loc } = match m, sexpr with
 
   | _, _ -> Errors.cannot_infer_expr loc
 
-
 let rec finfer m { sexpr; loc } = match m, sexpr with
   (* I-Unit *)
   | m, SCons ("Unit", []) ->
@@ -549,14 +549,13 @@ let rec finfer m { sexpr; loc } = match m, sexpr with
       | TArr (a, b) -> a, b
       | a' -> Errors.function_non_arr loc a'
     in let* a = match a with
-    (* I-AbsCheck *)
-    | None -> return a'
-    (* I-AbsAnnoCheck *)
-    | Some a ->
-      let* a = Type.check_type a in
-      a' =~ a
-    in
-    protect_context begin
+        (* I-AbsCheck *)
+        | None -> return a'
+        (* I-AbsAnnoCheck *)
+        | Some a ->
+          let* a = Type.check_type a in
+          a' =~ a
+    in protect_context begin
       add_bindings (List.map (fun (x, k) -> BType (x, k)) alphas) >>
       let* v = fresh_var x a in
       let* _, m = finfer (Check b) m in
@@ -567,7 +566,9 @@ let rec finfer m { sexpr; loc } = match m, sexpr with
   | (Infer _ | Fun _) as mode, SLam (x, a', m) ->
     let* p, q = split_fun loc (sk_of_mode mode) in
     let* a = match a' with
+      (* I-Abs *)
       | None -> guess_mono p
+      (* I-AbsAnno  *)
       | Some a ->
         let* a = Type.check_type a in
         p =~ a

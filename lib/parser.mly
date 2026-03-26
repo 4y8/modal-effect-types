@@ -245,6 +245,7 @@ let arg :=
   | UNIT; { "", Some stunit }
   | BANG; { "", Some stunit }
   | WILDCARD; { "", None }
+  | LPAR; x = IDENT; DCOL; t = stype; RPAR; { x, Some t }
 
 let arg_loc :=
   | x = arg; { x, Some ($startpos, $endpos) }

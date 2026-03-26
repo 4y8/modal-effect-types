@@ -12,13 +12,18 @@ let open_file f tctx ectx =
       begin match List.assoc_opt x ctx.id with
         | Some v ->
           let (_, a, _), _ = get_type_context v ctx in
-          let (_, m), _ = Core.Frost.finfer (Check a) m ctx in
+          let (_, m), _ =
+            try
+              Core.Frost.finfer (Check a) m ctx
+            with
+            | Core.Frost.UnifyError (a, b) -> Core.Errors.cannot_unify None a b
+          in
           (v, m) :: p, ctx
         | None ->
           let (a, m), ctx' = Core.Frost.finfer (Infer Ghost) m ctx in
+          let a = Core.Frost.subst_suffix ctx'.gamma a in
           if !verbose then
             Format.printf "%s : %a@." x Core.Pprint.ty a;
-          let a = Core.Frost.subst_suffix ctx'.gamma a in
           let v, ctx = fresh_var x a ctx in
           (v, m) :: p, ctx
       end

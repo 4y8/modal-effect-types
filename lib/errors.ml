@@ -25,6 +25,12 @@ let type_mismatch loc ~expected ~got =
         "Type mismatch: this expression has type %a but expected an expression of type %a"
         ty got ty expected)
 
+let cannot_unify loc a b =
+  error loc
+    (fun fmt -> text fmt
+        "Type mimsatch: cannot unify types %a and %a"
+        ty a ty b)
+
 let function_non_arr loc a = error loc
     (fun fmt -> text fmt
         "Checking a function against type %a which is not an arrow" ty a)

@@ -1,0 +1,7 @@
+val id : forall a . a -> a
+val auto : (forall a . a -> a) -> (forall a . a -> a)
+
+let infer = id auto
+
+val check : (forall a . a -> a) -> (forall a . a -> a)
+let check = id auto

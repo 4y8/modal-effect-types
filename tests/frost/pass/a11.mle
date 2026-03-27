@@ -1,0 +1,10 @@
+type list a = Nil | Cons of a, list a
+type bool = True | False
+type pair a b = Pair of a, b
+
+val k : forall a . a -> list a -> int
+val xs : list ((forall a . a -> a) -> (int * bool))
+val make_pair : forall a b . a -> b -> a * b
+val true : bool
+
+let infer = k (fun f -> make_pair (f 42) (f true)) xs

@@ -149,7 +149,8 @@ let rec join_sk s p theta =
   | UGhost s, p when is_guarded s theta && not (is_flex_var s) ->
     join_sk s p theta
 
-  | _ -> raise (UnifyError (s, p))
+  | _ ->
+    raise (UnifyError (s, p))
 
 and join_var alpha beta theta = match alpha, theta with
   (* U-Flex-Flex-Id *)
@@ -185,7 +186,8 @@ and join_var alpha beta theta = match alpha, theta with
     let theta = join_var alpha beta theta in
     hd :: theta
 
-  | _, [] -> raise (UnifyError (alpha, MFlex beta))
+  | _, [] ->
+    raise (UnifyError (alpha, MFlex beta))
 
 and assign alpha s xi theta = match alpha, theta with
   (* U-Assign-SolveM *)
@@ -241,7 +243,8 @@ and assign alpha s xi theta = match alpha, theta with
   | _, ((BVar _ | Marker | Lock _) as hd) :: theta ->
     hd :: assign alpha s xi theta
 
-  | _ -> raise (UnifyError (alpha, s))
+  | _ ->
+    raise (UnifyError (alpha, s))
 
 let rec sk_of_mode = function
   | Infer p | Check p -> p
@@ -282,7 +285,8 @@ let rec prejoin p q = match p, q with
     prejoin p q
   | TArr (p1, p2), TArr (q1, q2) ->
     TArr (prejoin p1 q1, prejoin p2 q2)
-  | p, q -> raise (UnifyError (p, q))
+  | p, q ->
+    raise (UnifyError (p, q))
 
 let rec presub m p q = match p, q, m with
   | Ghost, q, _ when is_guarded q [] ->
@@ -302,7 +306,8 @@ let rec presub m p q = match p, q, m with
     presub m p q
   | TArr (p1, p2), TArr (q1, q2), Fun (_, m) ->
     TArr (prejoin p1 q1, presub m p2 q2)
-  | p, q, _ -> raise (UnifyError (p, q))
+  | p, q, _ ->
+    raise (UnifyError (p, q))
 
 let guess_mono_ = guess_mono
 
@@ -323,7 +328,8 @@ let guess_mono_suffix l =
 let is_guarded p ({ gamma; _ } as ctx) =
   is_guarded p gamma, ctx
 
-let rec broom loc m n s = match m, n, s with
+let rec broom loc m n s =
+  match m, n, s with
   (* SI-Infer *)
   | Infer Ghost, _, s ->
     return s
@@ -374,8 +380,7 @@ let rec broom loc m n s = match m, n, s with
       return a
     (* SI-FlexPoly *)
     else begin match t with
-      | PFlex a ->
-        broom_flex_poly loc [] m Ty a
+      | PFlex a -> broom_flex_poly loc [] m Ty a
       | _ -> failwith "broom: SI-Check"
     end
 
@@ -404,7 +409,7 @@ and broom_flex_poly loc xi m n alpha =
       | Ty -> guess_mono q'
       (* SI-FlexPoly-Solve-Sk *)
       | Sk -> return q' in
-    let* t = broom loc m Ty a in
+    let* t = broom loc m n a in
     add_binding (BPFlex (a', a, k)) >>
     return t
 
@@ -435,7 +440,8 @@ and broom_flex_poly loc xi m n alpha =
 
   | Marker | Lock _ -> failwith "broom_flex_poly: should not happen"
 
-  | _ -> raise (UnifyError (PFlex alpha, sk_of_mode m))
+  | _ ->
+    raise (UnifyError (PFlex alpha, sk_of_mode m))
 
 let sub loc m n p =
   let* s, xi = get_suffix @@
@@ -465,6 +471,9 @@ let rec sk_infer m { sexpr; loc } = match m, sexpr with
   (* PI-Unit *)
   | m, SCons ("Unit", []) ->
     sub loc m Sk (TCon ("unit", [||]))
+
+  | m, SInt _ ->
+    sub loc m Sk (TCon ("int", [||]))
 
   (* PI-Var *)
   | m, SVar x ->

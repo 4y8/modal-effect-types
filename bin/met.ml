@@ -20,7 +20,11 @@ let open_file f tctx ectx =
           in
           (v, m) :: p, ctx
         | None ->
-          let (a, m), ctx' = Core.Frost.finfer (Infer Ghost) m ctx in
+          let (a, m), ctx' = try
+              Core.Frost.finfer (Infer Ghost) m ctx
+            with
+            | Core.Frost.UnifyError (a, b) -> Core.Errors.cannot_unify None a b
+          in
           let a = Core.Frost.subst_suffix ctx'.gamma a in
           if !verbose then
             Format.printf "%s : %a@." x Core.Pprint.ty a;

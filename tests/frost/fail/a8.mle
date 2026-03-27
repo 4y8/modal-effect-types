@@ -1,0 +1,8 @@
+val auto' : forall b . (forall a . a -> a) -> (b -> b)
+val id : forall a . a -> a
+val choose : forall a . a -> a -> a
+
+let infer = choose id auto'
+
+-- val check : (forall a . a -> a) -> (forall a . a -> a)
+-- let check = choose id auto'

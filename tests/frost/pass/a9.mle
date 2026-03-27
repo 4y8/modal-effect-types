@@ -7,5 +7,5 @@ val ids : list (forall a . a -> a)
 
 let infer = f (choose id) ids
 
-val check : forall a . (a -> a)
-let check = f (choose id) ids
+-- val check : forall a . (a -> a)
+-- let check = f (choose id) ids

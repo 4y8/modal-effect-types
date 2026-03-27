@@ -1,0 +1,8 @@
+type list a = Nil | Cons of a, list a
+
+val append : forall a . list a -> list a -> list a
+val single : forall a . a -> list a
+val id : forall a . a -> a
+val ids : list (forall a . a -> a)
+
+let infer = append (single id) ids

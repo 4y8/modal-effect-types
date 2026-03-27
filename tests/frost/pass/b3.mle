@@ -1,0 +1,6 @@
+type list a = Nil | Cons of a, list a
+
+val ids : list (forall a . a -> a)
+val cons : forall a . a -> list a -> list a
+
+let infer = cons (fun x -> x) ids

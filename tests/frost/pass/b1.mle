@@ -1,0 +1,12 @@
+type list a = Nil | Cons of a, list a
+
+val ids : list (forall a . a -> a)
+val id : forall a . a -> a
+val nil : forall a . list a
+val tail : forall a . list a -> list a
+val single : forall a . a -> list a
+val head : forall a . list a -> a
+
+let infer1 = tail ids
+let infer2 = head ids
+let infer3 = single id

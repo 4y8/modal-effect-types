@@ -1,0 +1,9 @@
+type st s a = Test
+
+val app : forall a b . (a -> b) -> a -> b
+val revapp : forall a b . a -> (a -> b) -> b
+val runST : forall a . (forall s . st s a) -> a
+val argST : forall s . st s int
+
+let infer1 = app runST argST
+let infer2 = revapp argST runST

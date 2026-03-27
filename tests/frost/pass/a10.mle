@@ -1,0 +1,9 @@
+type bool = True | False
+type pair a b = Pair of a, b
+
+val poly : (forall a . a -> a) -> (int * bool)
+val id : forall a . a -> a
+
+let infer1 = poly id
+let infer2 = poly (fun x -> x)
+let infer3 = id poly (fun x -> x)

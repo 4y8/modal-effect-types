@@ -3,5 +3,5 @@ val auto' : forall b . (forall a . a -> a) -> (b -> b)
 
 let infer = id auto'
 
-val check : forall b . (forall a . a -> a) -> (b -> b)
-let check = id auto'
+-- val check : forall b . (forall a . a -> a) -> (b -> b)
+-- let check = id auto'

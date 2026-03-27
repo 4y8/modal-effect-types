@@ -1,0 +1,6 @@
+type pair a b = Pair of a, b
+
+val make_pair : forall a b . a -> b -> a * b
+
+val check : ((forall a . a -> a) -> int) * int
+let check = make_pair (fun x -> 42) 42

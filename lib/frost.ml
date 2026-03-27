@@ -291,6 +291,8 @@ let rec prejoin p q = match p, q with
 let rec presub m p q = match p, q, m with
   | Ghost, q, _ when is_guarded q [] ->
     q
+  | p, Ghost, _ when is_guarded p [] ->
+    p
   | p, q, (Check _ | Infer _) when is_guarded p [] && is_guarded q [] ->
     prejoin p q
   | MFlex _ as p, q, Fun _ when is_guarded q [] ->
@@ -328,14 +330,20 @@ let guess_mono_suffix l =
 let is_guarded p ({ gamma; _ } as ctx) =
   is_guarded p gamma, ctx
 
+let is_pflex = function
+  | PFlex _ -> true
+  | _ -> false
+
 let rec broom loc m n s =
+  let* gp = is_guarded (sk_of_mode m) in
+  let* gs = is_guarded s in
   match m, n, s with
   (* SI-Infer *)
   | Infer Ghost, _, s ->
     return s
 
   (* SI-ForallR *)
-  | Check (TForA (k, b) as a), Ty, t ->
+  | Check (TForA (k, b) as a), Ty, t when not (is_pflex t) ->
     let v, b = Bindlib.unbind b in
     with_binding (BType (v, k)) @@
     let* _ = broom loc (Check b) Ty t in
@@ -350,7 +358,8 @@ let rec broom loc m n s =
   (* SI-ForallL *)
   | (Fun _ | Check _), n, TForA (k, s) ->
     incr counter;
-    let a' = Bindlib.new_var (fun v -> PFlex v) (Printf.sprintf "x%d" !counter) in
+    let a' = Bindlib.new_var (fun v -> PFlex v)
+        (Printf.sprintf "x%d" !counter) in
     add_binding (BPFlex (a', Ghost, k)) >>
     broom loc m n (Bindlib.subst s (PFlex a'))
 
@@ -370,30 +379,18 @@ let rec broom loc m n s =
   | Fun _, n, PFlex a ->
     broom_flex_poly loc [] m n a
 
+  (* SI-FlexPoly *)
+  | Check _, n, PFlex a when not gs ->
+    broom_flex_poly loc [] m n a
+
   (* SI-Check *)
-  | Check a, Ty, t ->
-    let* gt = is_guarded t in
-    if gt then
-      unless (is_guarded a)
-        (fun () -> failwith "broom: SI-Check") >>
-      let* _ = t =~ a in
-      return a
-    (* SI-FlexPoly *)
-    else begin match t with
-      | PFlex a -> broom_flex_poly loc [] m Ty a
-      | _ -> failwith "broom: SI-Check"
-    end
+  | Check a, Ty, t when gs && gp ->
+    let* _ = t =~ a in
+    return a
 
   (* SI-UnivGhostR *)
-  | Check Ghost, Sk, s ->
-    let* gs = is_guarded s in
-    if gs then
-      return @@ UGhost s
-    (* SI-FlexPoly *)
-    else begin match s with
-      | PFlex a -> broom_flex_poly loc [] m Sk a
-      | _ -> failwith "broom: SI-UnivGhostR"
-    end
+  | Check Ghost, Sk, s when gs && not (is_flex_var s) ->
+    return @@ UGhost s
 
   | _ -> failwith "broom: todo"
 

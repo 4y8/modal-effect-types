@@ -1,0 +1,6 @@
+val choose : forall a . a -> a -> a
+val churchNil : forall a . (forall b . b -> (a -> b -> b))
+val churchIds : forall b . b -> ((forall a . a -> a) -> b -> b)
+val churchHead : forall a . (forall b . b -> (a -> b -> b)) -> a
+
+let infer = choose churchNil churchIds

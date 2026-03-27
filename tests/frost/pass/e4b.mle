@@ -1,0 +1,9 @@
+type list a = Nil | Cons of a, list a
+type pair a b = Pair of a, b
+type bool = True | False
+
+val poly : (forall a . a -> a) -> (int * bool)
+val map : forall a b . (a -> b) -> list a -> list b
+val ids : list (forall a . a -> a)
+
+let infer = map (fun x -> poly x) ids

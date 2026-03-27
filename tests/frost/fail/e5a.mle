@@ -1,0 +1,9 @@
+type list a = Nil | Cons of a, list a
+type pair a b = Pair of a, b
+type bool = True | False
+
+val compose : forall a b c . (b -> c) -> (a -> b) -> a -> c
+val poly : (forall a . a -> a) -> (int * bool)
+val head : forall a . list a -> a
+
+let infer = compose poly head

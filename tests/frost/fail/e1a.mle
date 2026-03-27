@@ -1,0 +1,7 @@
+type list a = Nil | Cons of a, list a
+
+val lst : list (forall a . int -> a -> a)
+val k : forall a . a -> list a -> a
+val h : int -> (forall a . a -> a)
+
+let infer = k h lst

@@ -1,0 +1,7 @@
+type bool = True | False
+type pair a b = Pair of a, b
+
+val poly : (forall a . a -> a) -> (int * bool)
+
+val check : (forall a . a -> a) -> (int * bool)
+let check x = poly x

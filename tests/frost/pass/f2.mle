@@ -1,0 +1,8 @@
+type list a = Nil | Cons of a, list a
+type pair a b = Pair of a, b
+
+val make_pair : forall a b . a -> b -> a * b
+val ids : list (forall a . a -> a)
+val f : forall a . (forall b . b -> b * a) -> a
+
+let infer = f (fun x -> make_pair x ids)

@@ -1,0 +1,8 @@
+type bool = True | False
+type list a = Nil | Cons of a, list a
+
+val ids : list (forall a . a -> a)
+val head : forall a . list a -> a
+val true : bool
+
+let infer = head ids true

@@ -1,0 +1,8 @@
+type list a = Nil | Cons of a, list a
+type pair a b = Pair of a, b
+type bool = True | False
+
+val poly : (forall a . a -> a) -> (int * bool)
+val head : forall a . list a -> a
+
+let infer xs = poly (head xs)

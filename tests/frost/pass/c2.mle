@@ -1,0 +1,3 @@
+val r : (forall a . a -> (forall b . b -> b)) -> int
+
+let infer = r (fun x y -> y)

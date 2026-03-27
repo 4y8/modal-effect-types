@@ -1,0 +1,9 @@
+type bool = True | False
+type pair a b = Pair of a, b
+type unit = Unit
+
+val true : bool
+val make_pair : forall a b . a -> b -> a * b
+val g : ((forall a . a -> a) -> (int * bool)) -> unit
+
+let infer = g (fun (f : forall a . a -> a) -> make_pair (f 42) (f true))

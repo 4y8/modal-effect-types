@@ -1,0 +1,9 @@
+type list a = Nil | Cons of a, list a
+type pair a b = Pair of a, b
+type bool = True | False
+
+val id : forall a . a -> a
+val single : forall a . a -> list a
+val polys : (list (forall a . a -> a)) -> int * bool
+
+let infer = (fun xs -> polys xs) (single id)

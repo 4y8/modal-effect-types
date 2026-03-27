@@ -45,7 +45,7 @@ rule lexer = parse
   | ',' { COMMA }
   | '|' { PIPE }
   | "{|" { LFREEZE }
-  | "|}" { LFREEZE }
+  | "|}" { RFREEZE }
   | "->" { ARROW }
   | "=>" { DARROW }
   | '.' { DOT }

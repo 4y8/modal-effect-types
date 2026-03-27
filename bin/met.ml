@@ -137,7 +137,8 @@ let () =
   let spec_list =
     [ ("--eval", Arg.Set eval, "Evaluate the program (needs a main function)")
     ; ("--verbose", Arg.Set verbose, "")
-    ; ("--skeleton", Arg.Set skeleton, "Print the result skeleton inference")]
+    ; ("--skeleton", Arg.Set skeleton, "Print the result skeleton inference")
+    ; ("--debug", Arg.Set Core.Frost.debug, "Print debug information")]
   in
   Format.set_margin 80;
   Arg.parse spec_list read_file "";

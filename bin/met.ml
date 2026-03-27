@@ -4,6 +4,7 @@ open Core.Type
 let eval = ref false
 let launch_repl = ref true
 let verbose = ref false
+let skeleton = ref false
 
 let open_file f tctx ectx =
   let open Core.Context in
@@ -20,6 +21,10 @@ let open_file f tctx ectx =
           in
           (v, m) :: p, ctx
         | None ->
+          (if !skeleton then
+            let a, ctx' = Core.Frost.sk_infer (Check Ghost) m ctx in
+            let a = Core.Frost.subst_suffix ctx'.gamma a in
+            Format.printf "%s : %a@." x Core.Pprint.ty a);
           let (a, m), ctx' = try
               Core.Frost.finfer (Infer Ghost) m ctx
             with
@@ -131,7 +136,8 @@ let read_file f =
 let () =
   let spec_list =
     [ ("--eval", Arg.Set eval, "Evaluate the program (needs a main function)")
-    ; ("--verbose", Arg.Set verbose, "")]
+    ; ("--verbose", Arg.Set verbose, "")
+    ; ("--skeleton", Arg.Set skeleton, "Print the result skeleton inference")]
   in
   Format.set_margin 80;
   Arg.parse spec_list read_file "";

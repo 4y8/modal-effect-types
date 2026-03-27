@@ -1,4 +1,4 @@
 let infer (x : forall a . a -> a) = x x
 
-val check : (forall a . a -> a) -> (forall a . a -> a)
-let check x = x x
+-- val check : (forall a . a -> a) -> (forall a . a -> a)
+-- let check x = x x

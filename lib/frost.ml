@@ -9,6 +9,15 @@ type mode
   | Check of pure_type
   | Fun of pure_type * mode
 
+let infer_ = Bindlib.box_apply (fun a -> Infer a)
+let check_ = Bindlib.box_apply (fun a -> Check a)
+let fun_ = Bindlib.box_apply2 (fun a m -> Fun (a, m))
+
+let rec box_mode = function
+  | Infer a -> infer_ (box_type a)
+  | Check a -> check_ (box_type a)
+  | Fun (a, m) -> fun_ (box_type a) (box_mode m)
+
 let rec is_guarded a theta = match a with
   | UGhost _ | Ghost | TForA _ | TMod _ -> false
   | TVar _ | TCon _ | MFlex _ | TArr _ -> true
@@ -21,6 +30,9 @@ let is_flex_var = function
 
 let subst_var a b v =
   Bindlib.(subst (bind_var v (box_type a) |> unbox) b)
+
+let subst_var_sk m a v =
+  Bindlib.(subst (bind_var v (box_mode m) |> unbox) a)
 
 let subst_suffix xi s =
   List.fold_left (fun t b -> match b with
@@ -69,7 +81,8 @@ let guess_mono =
   in
   aux
 
-let rec join_sk s p theta = match s, p with
+let rec join_sk s p theta =
+  match s, p with
   (* U-GhostL *)
   | Ghost, p -> p, theta
 
@@ -199,7 +212,8 @@ and assign alpha s xi theta = match alpha, theta with
 
   (* U-Assign-AssignPoly *)
   | MFlex _, BPFlex (b, p, k) :: theta when Bindlib.occur b (box_type s) ->
-    let xi, tau = guess_mono xi p in
+    let xi', tau = guess_mono [] p in
+    let xi = xi @ xi' in
     let theta = assign alpha (subst_var s tau b) xi theta in
     BPFlex (b, tau, k) :: theta
 
@@ -211,7 +225,7 @@ and assign alpha s xi theta = match alpha, theta with
   (* U-Assign-DependMono *)
   | (MFlex a | PFlex a), (BMFlex (b, None, _) as hd) :: theta when
       Bindlib.(occur b (box_type s) && not (eq_vars a b)) ->
-    assign alpha s (hd :: xi) theta
+    assign alpha s (xi @ [hd]) theta
 
   (* U-Assign-SkipMono *)
   | (MFlex a | PFlex a), (BMFlex (b, _, _) as hd) :: theta when
@@ -239,20 +253,6 @@ type sup
 let (=~) s p ({ gamma; _ } as ctx) =
   let s, gamma = join_sk s p gamma in
   s, { ctx with gamma }
-
-let guess_mono p = fun ({ gamma; _ } as ctx) ->
-  let gamma, p = guess_mono gamma p in
-  p, { ctx with gamma }
-
-(* eta expand to avoid value restriction *)
-let guess_mono_suffix l =
-  M.List.map (function
-  | BPFlex (a, p, k) ->
-    let* p = guess_mono p in
-    return @@ BPFlex (a, p, k)
-  | BMFlex (_, None, _) as b ->
-    add_binding b >> return b
-  | b -> return b) l
 
 let rec prejoin p q = match p, q with
   | Ghost, q -> q
@@ -304,6 +304,22 @@ let rec presub m p q = match p, q, m with
     TArr (prejoin p1 q1, presub m p2 q2)
   | p, q, _ -> raise (UnifyError (p, q))
 
+let guess_mono_ = guess_mono
+
+let guess_mono p = fun ({ gamma; _ } as ctx) ->
+  let gamma, p = guess_mono gamma p in
+  p, { ctx with gamma }
+
+(* eta expand to avoid value restriction *)
+let guess_mono_suffix l =
+  M.List.map (function
+  | BPFlex (a, p, k) ->
+    let* p = guess_mono p in
+    return @@ BPFlex (a, p, k)
+  | BMFlex (_, None, _) as b ->
+    add_binding b >> return b
+  | b -> return b) l
+
 let is_guarded p ({ gamma; _ } as ctx) =
   is_guarded p gamma, ctx
 
@@ -345,12 +361,8 @@ let rec broom loc m n s = match m, n, s with
     alpha =~ sk_of_mode m
 
   (* SI-FlexPoly *)
-  | Fun _, Ty, PFlex a ->
-    flex_poly loc m a
-
-  (* SI-FlexPoly' *)
-  | Fun _, Sk, PFlex a ->
-    flex_poly' loc m a
+  | Fun _, n, PFlex a ->
+    broom_flex_poly loc [] m n a
 
   (* SI-Check *)
   | Check a, Ty, t ->
@@ -362,7 +374,8 @@ let rec broom loc m n s = match m, n, s with
       return a
     (* SI-FlexPoly *)
     else begin match t with
-      | PFlex a -> flex_poly loc m a
+      | PFlex a ->
+        broom_flex_poly loc [] m Ty a
       | _ -> failwith "broom: SI-Check"
     end
 
@@ -371,34 +384,58 @@ let rec broom loc m n s = match m, n, s with
     let* gs = is_guarded s in
     if gs then
       return @@ UGhost s
-    (* SI-FlexPoly' *)
+    (* SI-FlexPoly *)
     else begin match s with
-      | PFlex a -> flex_poly' loc m a
+      | PFlex a -> broom_flex_poly loc [] m Sk a
       | _ -> failwith "broom: SI-UnivGhostR"
     end
 
   | _ -> failwith "broom: todo"
 
-and flex_poly loc m alpha =
-  let* theta, (q, k), theta' = get_pflex_split alpha in
-  let p = sk_of_mode m in
-  let q' = presub m q p in
-  replace_bindings theta' >>
-  let* a = guess_mono q' in
-  let* t = broom loc m Ty a in
-  add_binding (BPFlex (alpha, q, k)) >>
-  add_bindings theta >>
+and broom_flex_poly loc xi m n alpha =
+  let* b = pop_binding () in
+  match b with
+  (* SI-FlexPoly-Solve-Ty and SI-FlexPoly-Solve-Sk *)
+  | BPFlex (a', q, k) when Bindlib.eq_vars a' alpha ->
+    let q' = presub m q (sk_of_mode m) in
+    add_bindings xi >>
+    let* a = match n with
+      (* SI-FlexPoly-Solve-Ty *)
+      | Ty -> guess_mono q'
+      (* SI-FlexPoly-Solve-Sk *)
+      | Sk -> return q' in
+    let* t = broom loc m Ty a in
+    add_binding (BPFlex (a', a, k)) >>
     return t
 
-and flex_poly' loc m alpha =
-  let* theta, (q, k), theta' = get_pflex_split alpha in
-  let p = sk_of_mode m in
-  let q' = presub m q p in
-  replace_bindings theta' >>
-  let* p' = broom loc m Sk q' in
-  add_binding (BPFlex (alpha, q, k)) >>
-  add_bindings theta >>
-    return p'
+  (* SI-FlexPoly-AssignMono *)
+  | BMFlex (b, Some tau, _) as bind->
+    let* s = broom_flex_poly loc xi (subst_var_sk m tau b) n alpha in
+    add_binding bind >>
+    return s
+
+  (* SIFlexPoly-DependMono *)
+  | BMFlex (b, None, _) as bind when Bindlib.occur b (box_mode m) ->
+    broom_flex_poly loc (xi @ [bind]) m n alpha
+
+  (* SI-FlexPoly-SkipMono *)
+  | BMFlex (_, None, _) as bind
+
+  (* SI-FlexPoly-SkipPoly *)
+  | (BPFlex _ as bind) ->
+    let* s = broom_flex_poly loc xi m n alpha in
+    add_binding bind >>
+    return s
+
+  (* SI-FlexPoly-SkipRigid *)
+  | BType (b, _) as bind when not Bindlib.(occur b (box_mode m)) ->
+    let* s = broom_flex_poly loc xi m n alpha in
+    add_binding bind >>
+    return s
+
+  | Marker | Lock _ -> failwith "broom_flex_poly: should not happen"
+
+  | _ -> raise (UnifyError (PFlex alpha, sk_of_mode m))
 
 let sub loc m n p =
   let* s, xi = get_suffix @@

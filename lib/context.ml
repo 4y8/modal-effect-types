@@ -148,6 +148,10 @@ let replace_bindings gamma = fun ctx ->
 let add_bindings gamma' = fun ({ gamma ; _} as ctx) ->
   (), { ctx with gamma = gamma' @ gamma }
 
+
+let pop_binding () = fun ({ gamma ; _ } as ctx) ->
+  List.hd gamma, { ctx with gamma = List.tl gamma }
+
 let rec drop_marker = function
   | [] -> failwith "drop_marker: internal error"
   | Marker :: tl -> tl

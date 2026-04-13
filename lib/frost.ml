@@ -119,11 +119,9 @@ let rec join_sk s p theta =
   (* U-Unit (generalised) *)
   | TCon (c, a), TCon (c', a') when c = c' ->
     rule "U-Con";
-    let a, theta = Array.fold_right (fun (s, p) (a, theta) ->
-        let s', theta = join_sk s p theta in
-        (s' :: a), theta) (Array.combine a a') ([], theta) in
+    let a, theta = join_sk_array a a' theta in
     end_rule ();
-    TCon (c, Array.of_list a), theta
+    TCon (c, a), theta
 
   (* U-Rigid *)
   | TVar x, TVar y when Bindlib.eq_vars x y ->
@@ -190,6 +188,33 @@ let rec join_sk s p theta =
     end_rule ();
     Bindlib.(bind_var alpha (box_type s') |> tfora_ k |> unbox), theta
 
+  (* NEW *)
+  (* U-Mod *)
+  | TMod (mu, s), TMod (nu, p) ->
+    rule "U-Mod";
+    let mu', theta = match join_sk_mod mu nu theta with
+    | None -> raise (UnifyError (TMod (mu, s), TMod (nu, p)))
+    | Some x -> x
+    in
+    let s', theta = join_sk s p theta in
+    end_rule ();
+    TMod (mu', s'), theta
+
+  (* U-Mod-UnivGhost *)
+  | TMod (mu, s), (UGhost _ as p) ->
+    rule "U-Mod-UnivGhost";
+    let s', theta = join_sk s p theta in
+    end_rule ();
+    TMod (mu, s'), theta
+    
+  (* U-UnivGhost-Mod *)
+  | (UGhost _ as s), TMod (mu, p) -> 
+    rule "U-UnivGhost-Mod";
+    let s', theta = join_sk s p theta in
+    end_rule ();
+    TMod (mu, s'), theta
+  (* END NEW *) 
+
   (* U-Guarded-UnivGhost *)
   | s, UGhost p when is_guarded s theta && not (is_flex_var s) ->
     rule "U-Guarded-UnivGhost";
@@ -205,6 +230,48 @@ let rec join_sk s p theta =
 
   | _ ->
     raise (UnifyError (s, p))
+
+and join_sk_array a a' theta =
+  let l, theta = Array.fold_right (fun (s, p) (a, theta) ->
+      let s', theta = join_sk s p theta in
+      (s' :: a), theta) (Array.combine a a') ([], theta)
+  in Array.of_list l, theta
+
+(* NEW *)
+and join_sk_mod mu nu theta =
+  let join_sk_eff_ext d d' theta =
+    Option.bind 
+    (List.fold_right (fun { eff_name; eff_args } o -> match o with
+          | None -> None
+          | Some (d, d', theta) ->
+            match Effects.find_label_eff eff_name d' with
+            | None -> None
+            | Some ({ eff_args = eff_args'; _ }, d') ->
+              let eff_args, theta = join_sk_array eff_args eff_args' theta in
+              Some ({ eff_name; eff_args } :: d, d', theta))
+       d (Some ([], d', theta)))
+    (fun (d, d', theta) ->
+       if d' = [] then
+         Some (d, theta)
+       else None)
+  in
+  let join_sk_eff_ctx (d, eps) (d', eps') theta =
+    match join_sk_eff_ext d d' theta with
+    | None -> None
+    | Some (d, theta) ->
+      match eps, eps' with
+      | None, None -> Some ((d, None), theta)
+      | Some eps, Some eps' when Effects.eq_eff_var eps eps' ->
+        Some ((d, Some eps), theta)
+      | _, _ -> None
+  in
+  match mu, nu with
+  | MRel (l, d), MRel (l', d') when Effects.eq_mask l l' ->
+    Option.map (fun (d, theta) -> MRel (l, d), theta) (join_sk_eff_ext d d' theta)
+  | MAbs e, MAbs e' ->
+    Option.map (fun (e, theta) -> MAbs e, theta) (join_sk_eff_ctx e e' theta)
+  | _, _ -> None
+(* END NEW *)
 
 and join_var alpha beta theta = match alpha, theta with
   (* U-Flex-Flex-Id *)
@@ -395,6 +462,7 @@ let rec prejoin p q = match p, q with
     UGhost (prejoin p q)
   | p, UGhost q when is_guarded p [] ->
     prejoin p q
+
   (* NEW *)
   | UGhost _ as p, TMod (mu, q)
   | TMod (mu, p), (UGhost _ as q) ->
@@ -406,6 +474,7 @@ let rec prejoin p q = match p, q with
     in
     TMod (mu, prejoin p q)
   (* END NEW *)
+
   | TArr (p1, p2), TArr (q1, q2) ->
     TArr (prejoin p1 q1, prejoin p2 q2)
   | p, q ->

@@ -15,18 +15,18 @@ let open_file f tctx ectx =
           let (_, a, _), _ = get_type_context v ctx in
           let (_, m), _ =
             try
-              Core.Frost.finfer (Check a) m ctx
+              Core.Frost.finfer (Check a) m ([], None) ctx
             with
             | Core.Frost.UnifyError (a, b) -> Core.Errors.cannot_unify None a b
           in
           (v, m) :: p, ctx
         | None ->
           (if !skeleton then
-            let a, ctx' = Core.Frost.sk_infer (Check Ghost) m ctx in
+            let a, ctx' = Core.Frost.sk_infer (Check Ghost) m ([], None) ctx in
             let a = Core.Frost.subst_suffix ctx'.gamma a in
             Format.printf "%s : %a@." x Core.Pprint.ty a);
           let (a, m), ctx' = try
-              Core.Frost.finfer (Infer Ghost) m ctx
+              Core.Frost.finfer (Infer Ghost) m ([], None) ctx
             with
             | Core.Frost.UnifyError (a, b) -> Core.Errors.cannot_unify None a b
           in
@@ -76,7 +76,7 @@ let repl () =
       match tl with
       | TLExpr m ->
         let (a, m), ctx' =
-            Core.Frost.finfer (Infer Ghost) m ctx
+            Core.Frost.finfer (Infer Ghost) m ([], None) ctx
         in
         let a = Core.Frost.subst_suffix ctx'.gamma a in
         let v = Core.Eval.eval ectx m in
@@ -90,10 +90,10 @@ let repl () =
               match List.assoc_opt x ctx.id with
               | Some v ->
                 let (_, a, _), _ = Core.Context.get_type_context v ctx in
-                let (_, m), _ = Core.Frost.finfer (Check a) m ctx in
+                let (_, m), _ = Core.Frost.finfer (Check a) m ([], None) ctx in
                 a, v, m, ctx
               | None ->
-                let (a, m), ctx' = Core.Frost.finfer (Infer Ghost) m ctx in
+                let (a, m), ctx' = Core.Frost.finfer (Infer Ghost) m ([], None) ctx in
                 let a = Core.Frost.subst_suffix ctx'.gamma a in
                 let v, ctx = Core.Context.fresh_var x a ctx in
                 a, v, m, ctx

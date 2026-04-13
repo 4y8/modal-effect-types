@@ -240,7 +240,7 @@ and join_sk_array a a' theta =
 (* NEW *)
 and join_sk_mod mu nu theta =
   let join_sk_eff_ext d d' theta =
-    Option.bind 
+    Option.bind
     (List.fold_right (fun { eff_name; eff_args } o -> match o with
           | None -> None
           | Some (d, d', theta) ->
@@ -423,18 +423,6 @@ let (=~) s p ({ gamma; _ } as ctx) =
   let s, gamma = join_sk s p gamma in
   s, { ctx with gamma }
 
-let rec split_guards = function
-  | TForA (k, p) ->
-    let alpha, p = Bindlib.unbind p in
-    let mu, v, ughost, p = split_guards p in
-    mu, (k, alpha) :: v, ughost, p
-  | TMod (mu, p) ->
-    let nu, v, ughost, p = split_guards p in
-    Effects.compose mu nu, v, ughost, p
-  | UGhost p ->
-    Effects.id, [], true, p
-  | p ->
-    Effects.id, [], false, p
 
 let rec prejoin p q = match p, q with
   | Ghost, q -> q
@@ -568,32 +556,29 @@ let end_rule x = fun ctx ->
   end_rule ();
   (x, ctx)
 
-let rec broom loc m n s =
+let rec broom loc m n s e =
   let* gp = is_guarded (sk_of_mode m) in
   let* gs = is_guarded s in
   match m, n, s with
   (* SI-Infer *)
   | Infer Ghost, _, s ->
     rule "SI-Infer" >>
-    end_rule () >>
-    return s
+    end_rule s
 
   (* SI-ForallR *)
   | Check (TForA (k, b) as a), Ty, t when not (is_pflex t) ->
     rule "SI-ForallR" >>
     let v, b = Bindlib.unbind b in
     with_binding (BType (v, k)) @@
-    let* _ = broom loc (Check b) Ty t in
-    end_rule () >>
-    return a
+    let* _ = broom loc (Check b) Ty t e in
+    end_rule a
 
   (* SI-Arg *)
   | Fun (p, m), n, TArr (s1, s2) ->
     rule "SI-Arg" >>
     let* s1' = s1 =~ p in
-    let* s2' = broom loc m n s2 in
-    end_rule () >>
-    return (TArr (s1', s2'))
+    let* s2' = broom loc m n s2 e in
+    end_rule (TArr (s1', s2'))
 
   (* SI-ForallL *)
   | (Fun _ | Check _), n, TForA (k, s) ->
@@ -602,60 +587,68 @@ let rec broom loc m n s =
     let a' = Bindlib.new_var (fun v -> PFlex v)
         (Printf.sprintf "x%d" !counter) in
     add_binding (BPFlex (a', Ghost, k)) >>
-    let* s' = broom loc m n (Bindlib.subst s (PFlex a')) in
-    end_rule () >>
-    return s'
+    let* s' = broom loc m n (Bindlib.subst s (PFlex a')) e in
+    end_rule s'
+
+  (* NEW *)
+  (* SI-ModR *)
+  | Check (TMod (mu, a)), Ty, t when not (is_pflex t) ->
+    rule "SI-ModR" >>
+    let* _ = broom loc (Check a) Ty t (Effects.apply_mod mu e) in
+    end_rule (TMod (mu, a))
+
+  (* SI-ModL *)
+  | (Fun _ | Check _), n, TMod (mu, s) -> 
+    rule "SI-ModL" >>
+    (if not Effects.(sub_mod mu id e) then
+      Errors.no_unboxing loc mu e;
+    let* s' = broom loc m n s e in
+    end_rule s')
+  (* END NEW *) 
 
   (* SI-UnivGhostL *)
   | (Fun _ | Check _), Sk, UGhost s ->
     rule "SI-UnivGhostL" >>
-    let* s' = broom loc m Sk s in
-    end_rule () >>
-    return s'
+    let* s' = broom loc m Sk s e in
+    end_rule s'
 
   (* SI-Ghost *)
   | (Fun _ | Check _), Sk, Ghost ->
     rule "SI-Ghost" >>
-    end_rule () >>
-    return @@ sk_of_mode m
+    end_rule @@ sk_of_mode m
 
   (* SI-FlexMono *)
   | Fun _, _, (MFlex _ as alpha) ->
     rule "SI-FlexMono" >>
     let* tau = alpha =~ sk_of_mode m in
-    end_rule () >>
-    return tau
+    end_rule tau
 
   (* SI-FlexPoly *)
   | Fun _, n, PFlex a ->
     rule "SI-FlexPoly" >>
-    let* s = broom_flex_poly loc [] m n a in
-    end_rule () >>
-    return s
+    let* s = broom_flex_poly loc [] m n a e in
+    end_rule s
 
   (* SI-FlexPoly *)
   | Check _, n, PFlex a when not gs ->
     rule "SI-FlexPoly" >>
-    let* s = broom_flex_poly loc [] m n a in
-    end_rule () >>
-    return s
+    let* s = broom_flex_poly loc [] m n a e in
+    end_rule s
 
   (* SI-Check *)
   | Check a, Ty, t when gs && gp ->
     rule "SI-Check" >>
     let* _ = t =~ a in
-    end_rule () >>
-    return a
+    end_rule a
 
   (* SI-UnivGhostR *)
   | Check Ghost, Sk, s when gs && not (is_flex_var s) ->
     rule "SI-UnivGhostR" >>
-    end_rule () >>
-    return @@ UGhost s
+    end_rule (UGhost s)
 
   | _ -> failwith "broom: todo"
 
-and broom_flex_poly loc xi m n alpha =
+and broom_flex_poly loc xi m n alpha e =
   let* b = pop_binding () in
   match b with
   (* SI-FlexPoly-Solve-Ty and SI-FlexPoly-Solve-Sk *)
@@ -668,58 +661,52 @@ and broom_flex_poly loc xi m n alpha =
       | Ty -> guess_mono q'
       (* SI-FlexPoly-Solve-Sk *)
       | Sk -> return q' in
-    let* t = broom loc m n a in
+    let* t = broom loc m n a e in
     add_binding (BPFlex (a', a, k)) >>
-    end_rule () >>
-    return t
+    end_rule t
 
   (* SI-FlexPoly-AssignMono *)
   | BMFlex (b, Some tau, _) as bind->
     rule "SI-FlexPoly-AssignMono" >>
-    let* s = broom_flex_poly loc xi (subst_var_sk m tau b) n alpha in
+    let* s = broom_flex_poly loc xi (subst_var_sk m tau b) n alpha e in
     add_binding bind >>
-    end_rule () >>
-    return s
+    end_rule s
 
   (* SIFlexPoly-DependMono *)
   | BMFlex (b, None, _) as bind when Bindlib.occur b (box_mode m) ->
     rule "SI-FlexPoly-DependMono" >>
-    let* s = broom_flex_poly loc (xi @ [bind]) m n alpha in
-    end_rule () >>
-    return s
+    let* s = broom_flex_poly loc (xi @ [bind]) m n alpha e in
+    end_rule s
 
   (* SI-FlexPoly-SkipMono *)
   | BMFlex (_, None, _) as bind ->
     rule "SI-FlexPoly-SkipMono" >>
-    let* s = broom_flex_poly loc xi m n alpha in
+    let* s = broom_flex_poly loc xi m n alpha e in
     add_binding bind >>
-    end_rule () >>
-    return s
+    end_rule s
 
   (* SI-FlexPoly-SkipPoly *)
   | (BPFlex _ as bind) ->
     rule "SI-FlexPoly-SkipPoly" >>
-    let* s = broom_flex_poly loc xi m n alpha in
+    let* s = broom_flex_poly loc xi m n alpha e in
     add_binding bind >>
-    end_rule () >>
-    return s
+    end_rule s
 
   (* SI-FlexPoly-SkipRigid *)
   | BType (b, _) as bind when not Bindlib.(occur b (box_mode m)) ->
     rule "SI-FlexPoly-SkipRigid" >>
-    let* s = broom_flex_poly loc xi m n alpha in
+    let* s = broom_flex_poly loc xi m n alpha e in
     add_binding bind >>
-    end_rule () >>
-    return s
+    end_rule s
 
   | Marker | Lock _ -> failwith "broom_flex_poly: should not happen"
 
   | _ ->
     raise (UnifyError (PFlex alpha, sk_of_mode m))
 
-let sub loc m n p =
+let sub loc m n p e =
   let* s, xi = get_suffix @@
-      broom loc m n p in
+      broom loc m n p e in
   let* xi' = match n with
     | Ty -> guess_mono_suffix xi
     | Sk -> return xi
@@ -741,17 +728,17 @@ let unfun_mode m p = match m with
   | Check _ -> Check p
   | Infer _ -> Infer p
 
-let rec sk_infer m { sexpr; loc } = match m, sexpr with
+let rec sk_infer m { sexpr; loc } e = match m, sexpr with
   (* PI-Unit *)
   | m, SCons ("Unit", []) ->
     rule "PI-Unit" >>
-    let* q = sub loc m Sk (TCon ("unit", [||])) in
+    let* q = sub loc m Sk (TCon ("unit", [||])) e in
     end_rule () >>
     return q
 
   | m, SInt _ ->
     rule "PI-Int" >>
-    let* q = sub loc m Sk (TCon ("int", [||])) in
+    let* q = sub loc m Sk (TCon ("int", [||])) e in
     end_rule q
 
   (* PI-Var *)
@@ -761,20 +748,27 @@ let rec sk_infer m { sexpr; loc } = match m, sexpr with
     begin match id with
       | None -> Errors.unknown_var loc x
       | Some v ->
-        let* _, q, _ = get_type_context v in
-        sub loc m Sk q @> end_rule
+        let* _, q, gamma' = get_type_context v in
+        (* NEW *)
+        let nu, f = locks e gamma' in
+        let* q = across q nu f in
+        match q with
+        | None -> Errors.no_access loc x v e
+        | Some q ->
+        sub loc m Sk q e @> end_rule
+        (* END NEW *)
     end
 
   (* PI-Anno *)
   | m, SAnn (_, a) ->
     rule "PI-Anno" >>
     let* a = Type.check_type a in
-    sub loc m Sk a @> end_rule
+    sub loc m Sk a e @> end_rule
 
   (* PI-Freeze *)
   | Check Ghost, SFreeze m ->
     rule "PI-Freeze" >>
-    sk_infer (Infer Ghost) m @>
+    sk_infer (Infer Ghost) m e @>
     end_rule
 
   (* PI-AbsCheck *)
@@ -784,7 +778,7 @@ let rec sk_infer m { sexpr; loc } = match m, sexpr with
       protect_context begin
         let* _ = fresh_var x Ghost in
         get_suffix @@
-        sk_infer (Check Ghost) m
+        sk_infer (Check Ghost) m e
       end in
     add_bindings xi >>
     end_rule @@ UGhost (TArr (Ghost, q))
@@ -797,7 +791,7 @@ let rec sk_infer m { sexpr; loc } = match m, sexpr with
       protect_context begin
         let* _ = fresh_var x p in
         get_suffix @@
-        sk_infer (unfun_mode mode q) m
+        sk_infer (unfun_mode mode q) m e
       end in
     add_bindings xi >>
     end_rule @@ TArr (p, q')
@@ -810,7 +804,7 @@ let rec sk_infer m { sexpr; loc } = match m, sexpr with
       protect_context begin
         let* _ = fresh_var x a in
         get_suffix @@
-        sk_infer (Check Ghost) m
+        sk_infer (Check Ghost) m e
       end in
     add_bindings xi >>
     end_rule @@ UGhost (TArr (a, q))
@@ -824,7 +818,7 @@ let rec sk_infer m { sexpr; loc } = match m, sexpr with
       protect_context begin
         let* _ = fresh_var x a in
         get_suffix @@
-        sk_infer (unfun_mode mode q) m
+        sk_infer (unfun_mode mode q) m e
       end in
     add_bindings xi >>
     end_rule @@ TArr (a, q')
@@ -832,27 +826,27 @@ let rec sk_infer m { sexpr; loc } = match m, sexpr with
   (* PI-App *)
   | mode, SApp (m, n) ->
     rule "PI-App" >>
-    let* p = sk_infer (Check Ghost) n in
-    let* q' = sk_infer (Fun (p, mode)) m @> split_fun None $> snd in
+    let* p = sk_infer (Check Ghost) n e in
+    let* q' = sk_infer (Fun (p, mode)) m e @> split_fun None $> snd in
     end_rule q'
 
   | _, _ -> Errors.cannot_infer_expr loc
 
-let rec finfer m { sexpr; loc } = match m, sexpr with
+let rec finfer m { sexpr; loc } e = match m, sexpr with
   (* I-Unit *)
   | m, SCons ("Unit", []) ->
     rule "I-Unit" >>
-    let* a = sub loc m Ty (TCon ("unit", [||])) in
+    let* a = sub loc m Ty (TCon ("unit", [||])) e in
     end_rule (a, Con ("Unit", []))
 
   | m, SInt n ->
     rule "I-Int" >>
-    let* a = sub loc m Ty (TCon ("int", [||])) in
+    let* a = sub loc m Ty (TCon ("int", [||])) e in
     end_rule (a, Lit (Int n))
 
   | m, SStr s ->
     rule "I-Str" >>
-    let* a = sub loc m Ty (TCon ("string", [||])) in
+    let* a = sub loc m Ty (TCon ("string", [||])) e in
     return (a, Lit (Str s))
 
   (* I-Var *)
@@ -862,23 +856,30 @@ let rec finfer m { sexpr; loc } = match m, sexpr with
     begin match id with
       | None -> Errors.unknown_var loc x
       | Some v ->
-        let* _, a, _ = get_type_context v in
-        let* b = sub loc m Ty a in
-        end_rule (b , Var v)
+        let* _, a, gamma' = get_type_context v in
+        (* NEW *)
+        let nu, f = locks e gamma' in
+        let* a = across a nu f in
+        match a with
+        | None -> Errors.no_access loc x v e
+        | Some a ->
+          let* b = sub loc m Ty a e in
+          end_rule (b , Var v)
+        (* END NEW *)
     end
 
   (* I-Anno *)
   | mode, SAnn (m, a) ->
     rule "I-Anno" >>
     let* a = Type.check_type a in
-    let* _, m = finfer (Check a) m in
-    let* b = sub loc mode Ty a in
+    let* _, m = finfer (Check a) m e in
+    let* b = sub loc mode Ty a e in
     end_rule (b, m)
 
   (* I-Freeze *)
   | Check a, SFreeze m ->
     rule "I-Freeze" >>
-    let* b, m = finfer (Infer Ghost) m in
+    let* b, m = finfer (Infer Ghost) m e in
     let* _ = b =~ a in
     end_rule (a, m)
 
@@ -899,7 +900,7 @@ let rec finfer m { sexpr; loc } = match m, sexpr with
     in protect_context begin
       add_bindings (List.map (fun (x, k) -> BType (x, k)) alphas) >>
       let* v = fresh_var x a in
-      let* _, m = finfer (Check b) m in
+      let* _, m = finfer (Check b) m e in
       end_rule (t, Bindlib.(box_expr m |> bind_var v |> lam_ |> unbox))
     end
 
@@ -918,7 +919,7 @@ let rec finfer m { sexpr; loc } = match m, sexpr with
       protect_context begin
         let* v = fresh_var x a in
         get_suffix @@
-        let* b, m = finfer (unfun_mode mode q) m in
+        let* b, m = finfer (unfun_mode mode q) m e in
         return (TArr (a, b),
                 Bindlib.(box_expr m |> bind_var v |> lam_ |> unbox))
       end in
@@ -928,10 +929,10 @@ let rec finfer m { sexpr; loc } = match m, sexpr with
   (* I-App *)
   | mode, SApp (m, n) ->
     rule "I-App" >>
-    let* p = sk_infer (Check Ghost) n in
-    let* t, m = finfer (Fun (p, mode)) m in
+    let* p = sk_infer (Check Ghost) n e in
+    let* t, m = finfer (Fun (p, mode)) m e in
     let* a, b = split_fun None t in
-    let* _, n = finfer (Check a) n in
+    let* _, n = finfer (Check a) n e in
     end_rule (b, App (m, n))
 
   | _ ->

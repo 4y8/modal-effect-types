@@ -252,6 +252,7 @@ let across a nu f =
   else
     let mu, g = get_guarded a in
     match Effects.right_residual nu mu f with
+    | Some (MRel ([], [])) -> return @@ Some g
     | Some xi -> return @@ Some (TMod (xi, g))
     | _ -> return None
 

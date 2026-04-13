@@ -163,15 +163,15 @@ let sub_mod mu nu f = match mu, nu with
 
 let rec get_op l = function
   | [] -> None
-  | {op_name; op_in; op_out} :: _ when op_name = l -> Some (op_in, op_out)
+  | { op_name; op_in; op_out } :: _ when op_name = l -> Some (op_in, op_out)
   | _ :: tl -> get_op l tl
 
 let rec join_eff_ext d d' = match d with
   | [] -> Some d'
-  | {eff_name; eff_args} as hd :: d ->
+  | { eff_name; eff_args } as hd :: d ->
     match find_label_eff eff_name d' with
     | None -> Option.map (fun e -> hd :: e) (join_eff_ext d d')
-    | Some ({eff_args = eff_args'; _}, d') when
+    | Some ({ eff_args = eff_args'; _ }, d') when
         Array.for_all2 eq_ty eff_args eff_args' ->
       Option.map (fun e -> hd :: e) (join_eff_ext d d')
     | _ -> None
@@ -188,10 +188,10 @@ let join_eff_ctx (d, eps) (d', eps') =
 
 let rec meet_eff e e' = match e with
   | [] -> Some []
-  | {eff_name; eff_args} as hd :: e ->
+  | { eff_name; eff_args } as hd :: e ->
     match find_label_eff eff_name e' with
     | None -> meet_eff e e'
-    | Some ({eff_args = eff_args'; _}, e') when
+    | Some ({ eff_args = eff_args'; _ }, e') when
         Array.for_all2 eq_ty eff_args eff_args' ->
       Option.map (fun e -> hd :: e) (meet_eff e e')
     | _ -> None

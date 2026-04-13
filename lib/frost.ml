@@ -38,6 +38,10 @@ let rec is_mono = function
   | TArr (a, b) -> is_mono a && is_mono b
   | _ -> false
 
+let is_ghost = function
+  | Ghost -> true
+  | _ -> false
+
 let subst_var a b v =
   Bindlib.(subst (bind_var v (box_type a) |> unbox) b)
 
@@ -128,18 +132,24 @@ let rec join_sk s p theta =
 
   (* U-Flex *)
   | (PFlex _ | MFlex _) as alpha, MFlex beta ->
-    rule "U-Flex"; end_rule ();
-    alpha, join_var alpha beta theta
+    rule "U-Flex";
+    let theta = join_var alpha beta theta in
+    end_rule ();
+    alpha, theta
 
   (* U-FlexR *)
   | s, (MFlex _ as alpha) ->
-    rule "U-FlexR"; end_rule ();
-    alpha, assign alpha s [] theta
+    rule "U-FlexR";
+    let theta = assign alpha s [] theta in
+    end_rule ();
+    alpha, theta
 
   (* U-FlexL *)
   | (PFlex _ | MFlex _) as alpha, p ->
-    rule "U-FlexL"; end_rule ();
-    alpha, assign alpha p [] theta
+    rule "U-FlexL";
+    let theta = assign alpha p [] theta in
+    end_rule ();
+    alpha, theta
 
   (* U-Arrow *)
   | TArr (s1, s2), TArr (p1, p2) ->
@@ -166,27 +176,32 @@ let rec join_sk s p theta =
 
   (* U-Forall-UnivGhost *)
   | TForA (k, s), (UGhost _ as p) ->
-    rule "U-Forall-UnivGhost"; end_rule ();
+    rule "U-Forall-UnivGhost";
     let alpha, s = Bindlib.unbind s in
     let s', theta = join_sk s p (BType (alpha, k) :: theta) in
+    end_rule ();
     Bindlib.(bind_var alpha (box_type s') |> tfora_ k |> unbox), theta
 
   (* U-UnivGhost-Forall *)
   | (UGhost _ as s), TForA (k, p) ->
-    rule "U-UnivGhost-Forall"; end_rule ();
+    rule "U-UnivGhost-Forall";
     let alpha, p = Bindlib.unbind p in
     let s', theta = join_sk s p (BType (alpha, k) :: theta) in
+    end_rule ();
     Bindlib.(bind_var alpha (box_type s') |> tfora_ k |> unbox), theta
 
   (* U-Guarded-UnivGhost *)
   | s, UGhost p when is_guarded s theta && not (is_flex_var s) ->
-    rule "U-Guarded-UnivGhost"; end_rule ();
-    join_sk s p theta
+    rule "U-Guarded-UnivGhost";
+    let theta = join_sk s p theta in
+    end_rule ();
+    theta
 
   (* U-UnivGhost-Guarded *)
   | UGhost s, p when is_guarded s theta && not (is_flex_var s) ->
-    rule "U-UnivGhost-Guarded"; end_rule ();
-    join_sk s p theta
+    rule "U-UnivGhost-Guarded";let theta = join_sk s p theta in
+    end_rule ();
+    theta
 
   | _ ->
     raise (UnifyError (s, p))
@@ -341,6 +356,19 @@ let (=~) s p ({ gamma; _ } as ctx) =
   let s, gamma = join_sk s p gamma in
   s, { ctx with gamma }
 
+let rec split_guards = function
+  | TForA (k, p) ->
+    let alpha, p = Bindlib.unbind p in
+    let mu, v, ughost, p = split_guards p in
+    mu, (k, alpha) :: v, ughost, p
+  | TMod (mu, p) ->
+    let nu, v, ughost, p = split_guards p in
+    Effects.compose mu nu, v, ughost, p
+  | UGhost p ->
+    Effects.id, [], true, p
+  | p ->
+    Effects.id, [], false, p
+
 let rec prejoin p q = match p, q with
   | Ghost, q -> q
   | p, Ghost -> p
@@ -352,14 +380,14 @@ let rec prejoin p q = match p, q with
     let a, p, q = Bindlib.unbind2 p q in
     let p' = prejoin p q in
     Bindlib.(box_type p' |> bind_var a |> tfora_ k |> unbox)
-  | UGhost p, TForA (k, q) ->
+  | UGhost _ as p, TForA (k, q) ->
     let a, q = Bindlib.unbind q in
     let p' = prejoin p q in
     Bindlib.(box_type p' |> bind_var a |> tfora_ k |> unbox)
   (* q is a skeleton so does not have polymoprphic flexible variables *)
   | UGhost p, q when is_guarded q [] ->
     prejoin p q
-  | TForA (k, p), UGhost q ->
+  | TForA (k, p), (UGhost _ as q) ->
     let a, p = Bindlib.unbind p in
     let p' = prejoin p q in
     Bindlib.(box_type p' |> bind_var a |> tfora_ k |> unbox)
@@ -367,10 +395,48 @@ let rec prejoin p q = match p, q with
     UGhost (prejoin p q)
   | p, UGhost q when is_guarded p [] ->
     prejoin p q
+  (* NEW *)
+  | UGhost _ as p, TMod (mu, q)
+  | TMod (mu, p), (UGhost _ as q) ->
+    TMod (mu, prejoin p q)
+  | TMod (mu, p), TMod (nu, q) ->
+    let mu = match prejoin_mod mu nu with
+      | Some mu -> mu
+      | _ -> raise (UnifyError (TMod (mu, p), TMod (nu, q)))
+    in
+    TMod (mu, prejoin p q)
+  (* END NEW *)
   | TArr (p1, p2), TArr (q1, q2) ->
     TArr (prejoin p1 q1, prejoin p2 q2)
   | p, q ->
     raise (UnifyError (p, q))
+
+and prejoin_mod mu nu =
+  let rec prejoin_eff_ext d d' = match d with
+    | [] ->
+      if d' = [] then Some [] else None
+    | { eff_name; eff_args } :: d ->
+      match Effects.find_label_eff eff_name d' with
+      | None -> None
+      | Some ({ eff_args = eff_args'; _ }, d') ->
+        let eff_args = Array.map2 prejoin eff_args eff_args' in
+        Option.map (List.cons { eff_name; eff_args }) (prejoin_eff_ext d d')
+  in
+  let prejoin_eff_ctx (d, eps) (d', eps') =
+    match prejoin_eff_ext d d' with
+    | None -> None
+    | Some d ->
+      match eps, eps' with
+      | None, None -> Some (d, None)
+      | Some eps, Some eps' when Effects.eq_eff_var eps eps' ->
+        Some (d, Some eps)
+      | _, _ -> None
+  in
+  match mu, nu with
+  | MRel (l, d), MRel (l', d') when Effects.eq_mask l l' ->
+    Option.map (fun d -> MRel (l, d)) (prejoin_eff_ext d d')
+  | MAbs e, MAbs e' -> Option.map (fun e -> MAbs e) (prejoin_eff_ctx e e')
+  | _, _ -> None
 
 let rec presub m p q = match p, q, m with
   | Ghost, q, _ when is_guarded q [] ->
@@ -387,6 +453,14 @@ let rec presub m p q = match p, q, m with
   | p, TForA (_, q), m ->
     let _, q = Bindlib.unbind q in
     presub m p q
+
+  (* NEW *)
+  | TMod (mu, p), q, m ->
+    TMod (mu, presub m p q)
+  | p, TMod (_, q), m ->
+    presub m p q
+  (* END NEW *)
+ 
   | UGhost p, q, m
   | p, UGhost q, m ->
     presub m p q

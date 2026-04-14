@@ -139,6 +139,16 @@ let get_eff e ctx =
 let lookup_eff e ctx =
   List.assoc_opt e ctx.effects, ctx
 
+let lookup_op op ctx =
+  List.find_map (fun (e, { eargs; eops }) ->
+      let v, l = Bindlib.unmbind eops in
+      List.find_map (fun { op_name; op_in; op_out } ->
+      if op_name = op then
+        Some (e, eargs, Bindlib.(bind_mvar v (op_ op_name (box_type op_in) (box_type op_out))
+                              |> unbox))
+      else None) l
+    ) ctx.effects, ctx
+
 let add_binding b = fun ctx ->
   (), ctx <: b
 
@@ -276,22 +286,14 @@ let fresh_tvar x k ({ gamma; tid; _ } as ctx) =
   let v = Bindlib.new_var (fun v -> TVar v) x in
   v, { ctx with gamma = BType (v, k) :: gamma; tid = (x, v) :: tid }
 
-let fresh_tvars args ctx =
-  let vars, ctx =
-    List.fold_right (fun (x, k) (vars, ctx) ->
-        Pair.map_fst (fun v -> v :: vars) @@ fresh_tvar x k ctx)
-      args ([], ctx) in
-  let mvar = Array.of_list vars in
-  mvar, ctx
-
 let fresh_var x a ({ gamma; id; _ } as ctx) =
   let v = Bindlib.new_var (fun v -> Var v) x in
   v, { ctx with gamma = BVar (v, a) :: gamma; id = (x, v) :: id }
 
-let fresh_vars args ctx =
+let fresh_vars_ f args ctx =
   let vars, ctx =
-    List.fold_right (fun (x, t) (vars, ctx) ->
-        Pair.map_fst (fun v -> v :: vars) @@ fresh_var x t ctx)
+    List.fold_right (fun x (vars, ctx) ->
+        Pair.map_fst (fun v -> v :: vars) @@ f x ctx)
       args ([], ctx) in
   let mvar = Array.of_list vars in
   mvar, ctx
@@ -300,3 +302,14 @@ let fresh_mflex k ctx =
   incr counter;
   let v = Bindlib.new_var (fun v -> MFlex v) (Printf.sprintf "x%d" !counter) in
   v, ctx <: BMFlex (v, None, k)
+
+let fresh_pflex k ctx =
+  incr counter;
+  let v = Bindlib.new_var (fun v -> PFlex v) (Printf.sprintf "x%d" !counter) in
+  v, ctx <: BPFlex (v, Ghost, k)
+
+let fresh_vars args ctx = fresh_vars_ (fun (x, t) -> fresh_var x t) args ctx
+
+let fresh_tvars args ctx = fresh_vars_ (fun (x, k) -> fresh_tvar x k) args ctx
+
+let fresh_pflexs kinds ctx = fresh_vars_ fresh_pflex kinds ctx

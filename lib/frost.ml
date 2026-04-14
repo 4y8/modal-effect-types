@@ -584,9 +584,7 @@ let rec broom loc m n s e =
   | (Fun _ | Check _), n, TForA (k, s) ->
     incr counter;
     rule "SI-ForallL" >>
-    let a' = Bindlib.new_var (fun v -> PFlex v)
-        (Printf.sprintf "x%d" !counter) in
-    add_binding (BPFlex (a', Ghost, k)) >>
+    let* a' = fresh_pflex k in
     let* s' = broom loc m n (Bindlib.subst s (PFlex a')) e in
     end_rule s'
 
@@ -729,7 +727,9 @@ let unfun_mode m p = match m with
   | Infer _ -> Infer p
 
 let rec split_fun_check loc a e = match a with
+  (* NEW *)
   | TMod (mu, a) -> split_fun_check loc a Effects.(apply_mod mu e)
+  (* END NEW *)
   | TForA (k, a) ->
     let v, a = Bindlib.unbind a in
     add_binding (BType (v, k)) >>
@@ -839,6 +839,28 @@ let rec sk_infer m { sexpr; loc } e = match m, sexpr with
     let* q' = sk_infer (Fun (p, mode)) m e @> split_fun None $> snd in
     end_rule q'
 
+  (* NEW *)
+  (* PI-Do *) 
+  | mode, SDo (op, m) ->
+    rule "PI-Do" >>
+    let* p = sk_infer (Check Ghost) m e in
+    let* lop = lookup_op op in
+    let _, args, bop = match lop with
+      | None -> Errors.unknown_eff loc op
+      | Some p -> p
+    in
+    let* op_out, xi = get_suffix begin
+        let* vars = fresh_pflexs args in
+        let { op_in; op_out; _ } = Bindlib.msubst bop
+            (Array.map (fun a -> PFlex a) vars) in
+        let* _ = broom loc (Check p) Sk op_in e in
+        broom loc mode Sk op_out e
+      end
+    in
+    end_rule (subst_suffix xi op_out)
+    
+  (* END NEW *) 
+
   | _, _ -> Errors.cannot_infer_expr loc
 
 let rec finfer m { sexpr; loc } e = match m, sexpr with
@@ -940,6 +962,20 @@ let rec finfer m { sexpr; loc } e = match m, sexpr with
     let* a, b = split_fun None t in
     let* _, n = finfer (Check a) n e in
     end_rule (b, App (m, n))
+
+  (* NEW *)
+  (* I-Do *)
+  | mode, SDo (op, m) ->
+    rule "I-Do" >>
+    let* ops = Type.unfold_ext (fst e) in
+    let a, b = match Effects.get_op op ops with
+      | None -> Errors.unknown_eff loc op
+      | Some p -> p
+    in
+    let* _, m = finfer (Check a) m e in
+    let* b = sub loc mode Ty b e in
+    end_rule (b, Do (op, m))
+  (* END NEW *)
 
   | _ ->
     Errors.cannot_infer_expr loc

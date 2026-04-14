@@ -1,0 +1,5 @@
+type unit = Unit
+eff gen = yield : int => unit
+
+val f : [gen](unit -> unit)
+let f () = do yield 1

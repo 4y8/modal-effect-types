@@ -145,9 +145,10 @@ and box_mod = function
   | MAbs e -> mabs_ (box_effect_ctx e)
   | MRel (l, d) -> mrel_ l (box_effect_ext d)
 
+let op_ op_name =
+    Bindlib.box_apply2 (fun op_in op_out -> { op_name; op_in; op_out })
+
 let box_ops ops =
-  let op_ op_name =
-    Bindlib.box_apply2 (fun op_in op_out -> { op_name; op_in; op_out }) in
   List.map (fun {op_name; op_in; op_out} ->
       op_ op_name (box_type op_in) (box_type op_out)) ops |>
   Bindlib.box_list

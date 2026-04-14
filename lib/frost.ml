@@ -728,6 +728,15 @@ let unfun_mode m p = match m with
   | Check _ -> Check p
   | Infer _ -> Infer p
 
+let rec split_fun_check loc a e = match a with
+  | TMod (mu, a) -> split_fun_check loc a Effects.(apply_mod mu e)
+  | TForA (k, a) ->
+    let v, a = Bindlib.unbind a in
+    add_binding (BType (v, k)) >>
+    split_fun_check loc a e
+  | TArr (a, b) -> return (a, b, e)
+  | a -> Errors.function_non_arr loc a
+
 let rec sk_infer m { sexpr; loc } e = match m, sexpr with
   (* PI-Unit *)
   | m, SCons ("Unit", []) ->
@@ -886,19 +895,16 @@ let rec finfer m { sexpr; loc } e = match m, sexpr with
   (* I-AbsCheck and I-AbsAnnoCheck *)
   | Check t, SLam (x, a, m) ->
     rule "I-AbsCheck" >>
-    let a', alphas = Type.split_foralls t in
-    let a', b = match a' with
-      | TArr (a, b) -> a, b
-      | a' -> Errors.function_non_arr loc a'
-    in let* a = match a with
+    protect_context begin
+      let* a', b, e = split_fun_check loc t e in
+      let* a = match a with
         (* I-AbsCheck *)
         | None -> return a'
         (* I-AbsAnnoCheck *)
         | Some a ->
           let* a = Type.check_type a in
           a' =~ a
-    in protect_context begin
-      add_bindings (List.map (fun (x, k) -> BType (x, k)) alphas) >>
+      in
       let* v = fresh_var x a in
       let* _, m = finfer (Check b) m e in
       end_rule (t, Bindlib.(box_expr m |> bind_var v |> lam_ |> unbox))

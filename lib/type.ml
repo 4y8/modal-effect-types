@@ -319,7 +319,7 @@ let rec check ({loc; sexpr} as m) a e =
 
   | SCons (c, l), a ->
     let tc, tl = split_cons loc a in
-    let* { cons; _ } = get_data c in
+    let* { cons; _ } = get_data tc in
     begin
       match List.assoc_opt c cons with
       | None -> unknown_cons loc c (Some tc)

@@ -92,8 +92,7 @@ let rec eval ctx = function
       | Some (vals, n) ->
         eval ctx (Bindlib.msubst n (Array.of_list vals))
     end
-  | Hand (m, _, ht, r, h) ->
-    let handled = ref [] in
+  | Hand (m, _, r, h) ->
     try
       let v = eval ctx m in
       eval ctx (Bindlib.subst r (Val v))
@@ -102,12 +101,9 @@ let rec eval ctx = function
       match List.assoc_opt e h, v with
       | Some _, VMask v
       | None, v -> continue k (perform (Do (e, v)))
-      | Some _, v when ht = Shallow && List.mem e !handled ->
-        continue k (perform (Do (e, v)))
       | Some ni, v ->
         let open Multicont.Deep in
         let k = promote k in
-        handled := e :: !handled;
         eval ctx (Bindlib.(subst (subst ni (Val v)) (Val (VClo (resume k)))))
 
 and eval_pat v vals = function

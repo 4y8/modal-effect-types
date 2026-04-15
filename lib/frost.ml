@@ -764,7 +764,7 @@ let rec sk_infer m { sexpr; loc } e = match m, sexpr with
         match q with
         | None -> Errors.no_access loc x v e
         | Some q ->
-        sub loc m Sk q e @> end_rule
+        sub loc m Sk q e >>= end_rule
         (* END NEW *)
     end
 
@@ -772,12 +772,12 @@ let rec sk_infer m { sexpr; loc } e = match m, sexpr with
   | m, SAnn (_, a) ->
     rule "PI-Anno" >>
     let* a = Type.check_type a in
-    sub loc m Sk a e @> end_rule
+    sub loc m Sk a e >>= end_rule
 
   (* PI-Freeze *)
   | Check Ghost, SFreeze m ->
     rule "PI-Freeze" >>
-    sk_infer (Infer Ghost) m e @>
+    sk_infer (Infer Ghost) m e >>=
     end_rule
 
   (* PI-AbsCheck *)
@@ -836,7 +836,7 @@ let rec sk_infer m { sexpr; loc } e = match m, sexpr with
   | mode, SApp (m, n) ->
     rule "PI-App" >>
     let* p = sk_infer (Check Ghost) n e in
-    let* q' = sk_infer (Fun (p, mode)) m e @> split_fun None $> snd in
+    let* q' = sk_infer (Fun (p, mode)) m e >>= split_fun None $> snd in
     end_rule q'
 
   (* NEW *)
@@ -844,21 +844,19 @@ let rec sk_infer m { sexpr; loc } e = match m, sexpr with
   | mode, SDo (op, m) ->
     rule "PI-Do" >>
     let* p = sk_infer (Check Ghost) m e in
-    let* lop = lookup_op op in
-    let _, args, bop = match lop with
+    let* _, kinds, bop = lookup_op op >>= function
       | None -> Errors.unknown_eff loc op
-      | Some p -> p
+      | Some p -> return p
     in
-    let* op_out, xi = get_suffix begin
-        let* vars = fresh_pflexs args in
-        let { op_in; op_out; _ } = Bindlib.msubst bop
-            (Array.map (fun a -> PFlex a) vars) in
-        let* _ = broom loc (Check p) Sk op_in e in
-        broom loc mode Sk op_out e
-      end
-    in
-    end_rule (subst_suffix xi op_out)
-    
+    let* vars = fresh_mflexs kinds in
+    let { op_in; op_out; _ } = Bindlib.msubst bop
+        (Array.map (fun a -> MFlex a) vars) in
+    let* _ = broom loc (Check p) Sk op_in e in
+    broom loc mode Sk op_out e >>= end_rule
+
+  | mode, SHand (m, _, _, (h, (x, n))) ->
+    ignore (mode, m, h, x, n);
+    return Ghost
   (* END NEW *) 
 
   | _, _ -> Errors.cannot_infer_expr loc
@@ -883,8 +881,7 @@ let rec finfer m { sexpr; loc } e = match m, sexpr with
   (* I-Var *)
   | m, SVar x ->
     rule "I-Var" >>
-    let* id = lookup_id x in
-    begin match id with
+    lookup_id x >>= begin function
       | None -> Errors.unknown_var loc x
       | Some v ->
         let* _, a, gamma' = get_type_context v in
@@ -975,6 +972,42 @@ let rec finfer m { sexpr; loc } e = match m, sexpr with
     let* _, m = finfer (Check a) m e in
     let* b = sub loc mode Ty b e in
     end_rule (b, Do (op, m))
+
+  (* I-Handle *)
+  | (Check _) as mode, SHand (m, None, _, (h, (x, n))) ->
+    let* eff_name, eargs, _ = lookup_op (fst (List.hd h)) >>= function
+      | Some x -> return x
+      | None ->
+        let (op, (loc, _, _, _)) = List.hd h in
+        Errors.unknown_eff loc op
+    in
+    let* vars = fresh_mflexs eargs in
+    let eff_args = Array.map (fun a -> MFlex a) vars in
+    let d = [{ eff_name; eff_args }] in
+    let nu = MRel ([], d) in
+    let* a, m = with_binding (Lock (nu, e)) @@
+      finfer (Infer Ghost) m (Effects.extend d e) in
+    let* b, n = protect_context @@
+      let* ret = fresh_var x (TMod (nu, a)) in
+      let* b, n = finfer mode n e in
+      let n = Bindlib.(n|> box_expr |> bind_var ret |> unbox) in
+      return (b, n)
+    in
+    let* ops = Type.unfold_ext d in
+    let check_clause (li, (loc, pi, ri, ni)) =
+      match Effects.get_op li ops with
+      | None -> Errors.unknown_eff loc li
+      | Some (ai, bi) ->
+        protect_context @@
+        let* pi = fresh_var pi ai in
+        let* ri = fresh_var ri (TArr (bi, b)) in
+        let* _, ni = finfer mode ni e in
+        return (li, Bindlib.(box_expr ni |> bind_var ri |> bind_var pi
+                             |> unbox))
+    in
+    let* h = M.List.map check_clause h in
+    return (b, Hand (m, ops, n, h))
+
   (* END NEW *)
 
   | _ ->

@@ -32,6 +32,8 @@ let bind f g = fun ctx ->
 
 let (let*) = bind
 
+let (>>=) = bind
+
 let (>>) f g =
   let* () = f in
   g
@@ -313,3 +315,5 @@ let fresh_vars args ctx = fresh_vars_ (fun (x, t) -> fresh_var x t) args ctx
 let fresh_tvars args ctx = fresh_vars_ (fun (x, k) -> fresh_tvar x k) args ctx
 
 let fresh_pflexs kinds ctx = fresh_vars_ fresh_pflex kinds ctx
+
+let fresh_mflexs kinds ctx = fresh_vars_ fresh_mflex kinds ctx

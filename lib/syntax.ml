@@ -3,8 +3,6 @@ let pp_loc _ _ = ()
 
 type kind = Abs | Any | Effect
 
-type htype = Shallow | Deep
-
 type surface_mdesc
   = SMAbs of surface_effect list
   | SMRel of (string * loc) list * surface_effect list
@@ -41,7 +39,7 @@ type surface_desc
   | SLet of string * surface_expr * surface_expr
   | SAppT of surface_expr * surface_type
   | SMask of (string * loc) list * surface_expr
-  | SHand of surface_expr * surface_effect list * surface_mod list * htype *
+  | SHand of surface_expr * surface_effect list option * surface_mod list *
              surface_handler
   | SCons of string * surface_expr list
   | SMatch of surface_expr * (surface_pat * surface_expr) list
@@ -173,8 +171,7 @@ type expr
   | Let of expr * pure_type * (expr, expr) Bindlib.binder
   | Con of string * expr list
   | Mask of string list * expr
-  | Hand of expr * op list * htype *
-            (expr, expr) Bindlib.binder *
+  | Hand of expr * op list * (expr, expr) Bindlib.binder *
             (string * (expr, (expr, expr) Bindlib.binder) Bindlib.binder) list
   | Match of expr * (pat * (expr, expr) Bindlib.mbinder) list
   | Val of value
@@ -202,10 +199,10 @@ let con_ c l = Bindlib.box_apply (fun l -> Con (c, l)) (Bindlib.box_list l)
 
 let mask_ l = Bindlib.box_apply (fun m -> Mask (l, m))
 
-let hand_ m d ht ret h =
+let hand_ m d ret h =
   let h = List.map (fun (e, b) -> Bindlib.box_apply (fun b -> (e, b)) b) h
        |> Bindlib.box_list in
-  Bindlib.box_apply3 (fun m ret h -> Hand (m, d, ht, ret, h)) m ret h
+  Bindlib.box_apply3 (fun m ret h -> Hand (m, d, ret, h)) m ret h
 
 let match_ m l =
   Bindlib.box_apply2 (fun m l -> Match (m, l)) m (Bindlib.box_list l)
@@ -232,8 +229,8 @@ let rec box_expr = function
     let_ (box_expr m) (box_type a) (Bindlib.box_binder box_expr n)
   | Con (c, l) -> con_ c (List.map box_expr l)
   | Mask (l, m) -> mask_ l (box_expr m)
-  | Hand (m, d, ht, ret, h) ->
-    hand_ (box_expr m) d ht (Bindlib.box_binder box_expr ret)
+  | Hand (m, d, ret, h) ->
+    hand_ (box_expr m) d (Bindlib.box_binder box_expr ret)
       (List.map (fun (e, b) ->
            e, Bindlib.(box_binder (box_binder box_expr) b)) h)
   | Match (m, c) ->

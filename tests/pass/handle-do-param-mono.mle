@@ -1,0 +1,8 @@
+type unit = Unit
+eff gen [a] = yield : a => unit
+
+val f : [](unit -> unit)
+let f () = handle do yield 1 with
+  | return _ => ()
+  | yield x k => ()
+  end

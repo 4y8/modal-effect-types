@@ -226,7 +226,7 @@ let rec check ({loc; sexpr} as m) a e =
     return @@ Mask (l, m)
 
   (* B-HandlerCheck *)
-  | SHand (m, d, mu, Deep, (l, (x, n))), a ->
+  | SHand (m, Some d, mu, (l, (x, n))), a ->
     let b = a in (* stay consistent with the paper *)
     let f = e in
     let* mu = M.List.map check_mod mu
@@ -259,42 +259,7 @@ let rec check ({loc; sexpr} as m) a e =
                              |> unbox))
     in
     let* l = M.List.map check_clause l in
-    return @@ Hand (m, ops, Deep, n, l)
-
-  (* B-HandlerCheck *)
-  | SHand (m, d, mu, Shallow, (l, (x, n))), a ->
-    let b = a in (* stay consistent with the paper *)
-    let f = e in
-    let* mu = M.List.map check_mod mu
-      $> List.fold_left Effects.compose Effects.id in
-    if not Effects.(sub_mod mu id f) then
-      no_unboxing loc mu f;
-    let e = Effects.apply_mod mu f in
-    let* d = check_effect_ext d in
-    let* ops = unfold_ext d in
-    let nu = Effects.compose mu (MRel ([], d)) in
-    let* m, a = with_binding (Lock (nu, e)) @@
-      infer m (Effects.extend d e) in
-    let* ret, n =
-      protect_context @@
-      let* ret = fresh_var x (TMod (nu, a)) in
-      let* n = check n b e in
-      return (ret, n)
-    in
-    let n = Bindlib.(n|> box_expr |> bind_var ret |> unbox) in
-    let check_clause (li, (loc, pi, ri, ni)) =
-      match Effects.get_op li ops with
-      | None -> unknown_eff loc li
-      | Some (ai, bi) ->
-        protect_context @@
-        let* pi = fresh_var pi ai in
-        let* ri = fresh_var ri (TMod (nu, TArr (bi, b))) in
-        let* ni = check ni b e in
-        return (li, Bindlib.(box_expr ni |> bind_var ri |> bind_var pi
-                             |> unbox))
-    in
-    let* l = M.List.map check_clause l in
-    return @@ Hand (m, ops, Shallow, n, l)
+    return @@ Hand (m, ops, n, l)
 
   (* B-CrispSumCheck and B-CrispPairCheck *)
   | SMatch (v, l), a ->
@@ -428,7 +393,7 @@ and infer {loc; sexpr} e =
     return (Do (l, m), b)
 
   (* B-HandlerInfer *)
-  | SHand (m, d, mu, Deep, (l, (x, n))) ->
+  | SHand (m, Some d, mu, (l, (x, n))) ->
     let f = e in
     let* mu = M.List.map check_mod mu
       $> List.fold_left Effects.compose Effects.id in
@@ -462,7 +427,7 @@ and infer {loc; sexpr} e =
     in
     let* h, bi = M.List.map infer_clause l $> List.split in
     let* b = M.List.fold_left (join_type loc e) b' bi in
-    return (Hand (m, ops, Deep, n, h), b)
+    return (Hand (m, ops, n, h), b)
   | SInt n -> return (Lit (Int n), TCon ("int", [||]))
   | SStr s -> return (Lit (Str s), TCon ("string", [||]))
 

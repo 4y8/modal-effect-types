@@ -150,11 +150,12 @@ let sub_mod mu nu f = match mu, nu with
   | MAbs e, _ ->
     sub_eff_ctx e (apply_mod nu f)
   | MRel (l1, d1), MRel (l2, d2) ->
-    let l, d = l1 >< d1 in
-    let l', d' = l2 >< d2 in
-    eq_mask l l' && d === d' &&
-    extract (fst f) (mask_diff l1 l2) <> None &&
-    extract (fst f) (mask_diff l2 l1) <> None
+    let g = apply_mod mu f in
+    let g' = apply_mod nu f in
+    let l, _ = l1 >< d1 in
+    let l', _ = l2 >< d2 in
+    sub_eff_ctx g g' && sub_eff_ctx g' g &&
+    eq_mask l l'
   | _, _ -> false
 
 let rec get_op l = function

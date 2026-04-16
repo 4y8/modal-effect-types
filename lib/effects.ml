@@ -1,6 +1,6 @@
 open Syntax
 
-let erase_types = List.map (fun {eff_name; _} -> eff_name)
+let erase_types = List.map (fun { eff_name; _ } -> eff_name)
 
 let rec get_first f = function
   | [] -> None
@@ -114,7 +114,7 @@ let eq_eff_var (eps, l) (eps', l') = match eps, eps' with
 let rec sub_eff d d' =
   match d with
   | [] -> true
-  | {eff_args; eff_name} :: tl ->
+  | { eff_args; eff_name } :: tl ->
     match find_label_eff eff_name d' with
     | None -> false
     | Some ({ eff_args = eff_args'; _ }, d') ->
@@ -149,16 +149,16 @@ let sub_eff_ctx (d, eps) (d', eps') =
   | Some eps, Some eps' -> sub_eff d' d && eq_eff_var eps eps'
   | _, _ -> false
 
-(* from wenhao's implementation : mu => nu @ f *)
 let sub_mod mu nu f = match mu, nu with
   | MAbs e, _ ->
     sub_eff_ctx e (apply_mod nu f)
   | MRel (l1, d1), MRel (l2, d2) ->
-    let l, d = l1 >< d1 in
-    let l', d' = l2 >< d2 in
-    eq_mask l l' && d === d' &&
-    extract (fst f) (mask_diff l1 l2) <> None &&
-    extract (fst f) (mask_diff l2 l1) <> None
+    let g = apply_mod mu f in
+    let g' = apply_mod nu f in
+    let l, _ = l1 >< d1 in
+    let l', _ = l2 >< d2 in
+    sub_eff_ctx g g' && sub_eff_ctx g' g &&
+    eq_mask l l'
   | _, _ -> false
 
 let rec get_op l = function

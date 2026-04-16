@@ -556,6 +556,37 @@ let end_rule x = fun ctx ->
   end_rule ();
   (x, ctx)
 
+let rec sub_eff d d' =
+  match d with
+  | [] -> return true
+  | { eff_args; eff_name } :: tl ->
+    match Effects.find_label_eff eff_name d' with
+    | None -> return false
+    | Some ({ eff_args = eff_args'; _ }, d') ->
+      let* _ = M.Array.map2 (=~) eff_args eff_args' in
+      sub_eff tl d'
+
+and (===) d d' = sub_eff d d' &&& sub_eff d' d
+
+let sub_eff_ctx (d, eps) (d', eps') =
+  sub_eff d d' &&&
+  match eps, eps' with
+  | None, _ -> return true
+  | Some eps, Some eps' -> sub_eff d' d &&& (return @@ Effects.eq_eff_var eps eps')
+  | _, _ -> return false
+
+let sub_mod mu nu f = match mu, nu with
+  | MAbs e, _ ->
+    sub_eff_ctx e (Effects.apply_mod nu f)
+  | MRel (l1, d1), MRel (l2, d2) ->
+    let g = Effects.apply_mod mu f in
+    let g' = Effects.apply_mod nu f in
+    let l, _ = Effects.(l1 >< d1) in
+    let l', _ = Effects.(l2 >< d2) in
+    sub_eff_ctx g g' &&& sub_eff_ctx g' g &&&
+    return Effects.(eq_mask l l')
+  | _, _ -> return false
+
 let rec broom loc m n s e =
   let* gp = is_guarded (sk_of_mode m) in
   let* gs = is_guarded s in
@@ -590,18 +621,32 @@ let rec broom loc m n s e =
 
   (* NEW *)
   (* SI-ModR *)
-  | Check (TMod (mu, a)), Ty, t when not (is_pflex t) ->
+  | Check (TMod _ as a'), n, (TMod _ as s') ->
     rule "SI-ModR" >>
-    let* _ = broom loc (Check a) Ty t (Effects.apply_mod mu e) in
-    end_rule (TMod (mu, a))
+    let mu, a = get_guarded a' in
+    let nu, s = get_guarded s' in
+    unless (sub_mod nu mu e)
+      (fun () -> Errors.mod_mismatch loc ~expected:mu ~got:nu e) >>
+    let* s = broom loc (Check a) n s (Effects.apply_mod mu e) in
+    let rec get_mod_list a b = match a with
+      | TMod (mu, a) -> TMod (mu, get_mod_list a b)
+      | _ -> b
+    in
+    end_rule (get_mod_list a' s)
+  | Check a, n, (TMod _ as s) ->
+    broom loc (Check (TMod (Effects.id, a))) n s e
+  | Check (TMod _) as m, Ty, t when not (is_pflex t) ->
+    broom loc m n (TMod (Effects.id, t)) e
 
-  (* SI-ModL *)
-  | (Fun _ | Check _), n, TMod (mu, s) -> 
-    rule "SI-ModL" >>
-    (if not Effects.(sub_mod mu id e) then
-      Errors.no_unboxing loc mu e;
+  (* SI-ModFun *)
+  | (Fun _), n, (TMod _ as s) -> 
+    rule "SI-ModFun" >>
+    let mu, s = get_guarded s in
+    unless (sub_mod mu Effects.id e)
+      (fun () ->
+         Errors.no_unboxing loc mu e) >>
     let* s' = broom loc m n s e in
-    end_rule s')
+    end_rule s'
   (* END NEW *) 
 
   (* SI-UnivGhostL *)
@@ -851,8 +896,8 @@ let rec sk_infer m { sexpr; loc } e = match m, sexpr with
     let* vars = fresh_mflexs kinds in
     let { op_in; op_out; _ } = Bindlib.msubst bop
         (Array.map (fun a -> MFlex a) vars) in
-    let* _ = broom loc (Check p) Sk op_in e in
-    broom loc mode Sk op_out e >>= end_rule
+    let* _ = sub loc (Check p) Sk op_in e in
+    sub loc mode Sk op_out e >>= end_rule
 
   | mode, SHand (m, _, _, (h, (x, n))) ->
     ignore (mode, m, h, x, n);
@@ -891,6 +936,7 @@ let rec finfer m { sexpr; loc } e = match m, sexpr with
         match a with
         | None -> Errors.no_access loc x v e
         | Some a ->
+          Format.printf "%a@." Pprint.ty a;
           let* b = sub loc m Ty a e in
           end_rule (b , Var v)
         (* END NEW *)
@@ -975,6 +1021,7 @@ let rec finfer m { sexpr; loc } e = match m, sexpr with
 
   (* I-Handle *)
   | (Check _) as mode, SHand (m, None, _, (h, (x, n))) ->
+    rule "I-Handle" >>
     let* eff_name, eargs, _ = lookup_op (fst (List.hd h)) >>= function
       | Some x -> return x
       | None ->
@@ -1006,7 +1053,7 @@ let rec finfer m { sexpr; loc } e = match m, sexpr with
                              |> unbox))
     in
     let* h = M.List.map check_clause h in
-    return (b, Hand (m, ops, n, h))
+    end_rule (b, Hand (m, ops, n, h))
 
   (* END NEW *)
 

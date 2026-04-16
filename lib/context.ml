@@ -120,6 +120,24 @@ module M = struct
           if c then aux (i + 1)
           else return false
       in aux 0
+
+    let map2 f a b =
+      let n = Array.length a in
+      if n <> Array.length b then
+        raise (Invalid_argument "map2");
+      
+      if n = 0 then return [||]
+      else
+        let* c = f a.(0) b.(0) in
+        let a' = Array.make n c in
+        let rec aux i =
+          if i = n then return ()
+          else
+            let* c = f a.(i) b.(i) in begin
+              a'.(i) <- c;
+              aux (i + 1)
+            end
+        in aux 1 >> return a'
   end
 end
 

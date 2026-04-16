@@ -2,7 +2,7 @@ type unit = Unit
 eff gen = yield : int => unit
 
 val f : [](unit -> unit)
-let f () = handle<> do yield 1 with
+let f () = handle do yield 1 with
   | return _ => ()
   | yield _ k => ()
   end

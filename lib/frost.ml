@@ -677,12 +677,12 @@ let rec broom loc m n s e =
     end_rule s'
 
   (* NEW *)
-  (* SI-ModR *)
-  | Check (TMod _ as a'), n, (TMod _ as s') ->
-    rule "SI-ModR" >>
+  (* SI-Mod *)
+  | Check (TMod _ as a'), Ty, (TMod _ as s') ->
+    rule "SI-Mod" >>
     let mu, a = get_guarded a' in
     let nu, s = get_guarded s' in
-    let* s = broom loc (Check a) n s (Effects.apply_mod mu e) in
+    let* s = broom loc (Check a) Ty s (Effects.apply_mod mu e) in
       unless (is_abs s ||| sub_mod nu mu e)
         (fun () -> Errors.mod_mismatch loc ~expected:mu ~got:nu e) >>
     let rec get_mod_list a b = match a with
@@ -690,23 +690,35 @@ let rec broom loc m n s e =
       | _ -> b
     in
     end_rule (get_mod_list a' s)
-  | Check a, n, (TMod _ as s) ->
-    broom loc (Check (TMod (Effects.id, a))) n s e >>= begin function
+  | Check a, Ty, (TMod _ as s) ->
+    broom loc (Check (TMod (Effects.id, a))) Ty s e >>= begin function
       | TMod (MRel ([], []), a) -> return a
       | _ -> failwith "broom: internal error"
     end
   | Check (TMod _) as m, Ty, t when not (is_pflex t) ->
-    broom loc m n (TMod (Effects.id, t)) e
+    broom loc m Ty (TMod (Effects.id, t)) e
 
-  (* SI-ModFun *)
-  | (Fun _), n, (TMod _ as s) -> 
-    rule "SI-ModFun" >>
+  (* SI-ModL *)
+  | Check _ as m, Sk,TMod (_, s) ->
+    rule "SI-ModL" >>
+    broom loc m Sk s e >>=
+    end_rule
+
+  (* SI-ModFunTy *)
+  | (Fun _), Ty, (TMod _ as s) -> 
+    rule "SI-ModFunTy" >>
     let mu, s = get_guarded s in
     unless (sub_mod mu Effects.id e)
       (fun () ->
          Errors.no_unboxing loc mu e) >>
     let* s' = broom loc m n s e in
     end_rule s'
+
+  (* SI-ModFunSk *)
+  | (Fun _), Sk, (TMod (_, s)) ->
+    rule "SI-ModFunSk" >>
+    broom loc m Sk s e >>=
+    end_rule
   (* END NEW *) 
 
   (* SI-UnivGhostL *)
@@ -834,7 +846,9 @@ let unfun_mode m p = match m with
 
 let rec split_fun_check loc a e = match a with
   (* NEW *)
-  | TMod (mu, a) -> split_fun_check loc a Effects.(apply_mod mu e)
+  | TMod (mu, a) ->
+    add_binding (Lock (mu, e)) >>
+    split_fun_check loc a Effects.(apply_mod mu e)
   (* END NEW *)
   | TForA (k, a) ->
     let v, a = Bindlib.unbind a in
@@ -890,6 +904,12 @@ let rec sk_infer m { sexpr; loc } e = match m, sexpr with
   | m, SInt _ ->
     rule "PI-Int" >>
     let* q = sub loc m Sk (TCon ("int", [||])) e in
+    end_rule q
+
+
+  | m, SStr _ ->
+    rule "PI-Str" >>
+    let* q = sub loc m Sk (TCon ("string", [||])) e in
     end_rule q
 
   (* PI-Var *)

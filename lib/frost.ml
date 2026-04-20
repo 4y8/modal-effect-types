@@ -745,7 +745,7 @@ let rec broom loc m n s e =
     end_rule
 
   (* SI-UnivGhostR *)
-  | Check Ghost, Sk, s when gs && not (is_flex_var s) ->
+  | Check Ghost, Sk, s when gs && not (is_pflex s) ->
     rule "SI-UnivGhostR" >>
     end_rule (UGhost s)
 

@@ -223,7 +223,7 @@ let rec join_sk s p theta =
     theta
 
   (* U-UnivGhost-Guarded *)
-  | UGhost s, p when is_guarded s theta && not (is_flex_var s) ->
+  | UGhost s, p when is_guarded p theta && not (is_flex_var p) ->
     rule "U-UnivGhost-Guarded";let theta = join_sk s p theta in
     end_rule ();
     theta

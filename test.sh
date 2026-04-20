@@ -12,7 +12,7 @@ fi
 
 for file in "$2/pass/"*.mle; do
     "$1" "$file" 2> "$file".err
-    if [ "$?" = 1 ]; then
+    if [ "$?" -ge 1 ] ; then
        err=$((err+1))
        echo "test $file failed"
     fi

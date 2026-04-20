@@ -89,8 +89,8 @@ let rec norm_ty = function
     Bindlib.(bind_var v (box_type (norm_ty a)) |> tfora_ k |> unbox)
   | TArr (a, b) -> TArr (norm_ty a, norm_ty b)
   | TMod (MRel (l, d), a) -> TMod (MRel (l, norm_eff_ext d), norm_ty a)
-  | TMod (MAbs eps, a) ->
-    TMod (MAbs (norm_eff_ctx eps), norm_ty a)
+  | TMod (MAbs e, a) ->
+    TMod (MAbs (norm_eff_ctx e), norm_ty a)
   | ECtx eps ->
     match norm_eff_ctx eps with
     | ([], Some (a, [])) -> a

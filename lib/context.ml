@@ -163,11 +163,21 @@ let lookup_op op ctx =
   List.find_map (fun (e, { eargs; eops }) ->
       let v, l = Bindlib.unmbind eops in
       List.find_map (fun { op_name; op_in; op_out } ->
-      if op_name = op then
-        Some (e, eargs, Bindlib.(bind_mvar v (op_ op_name (box_type op_in) (box_type op_out))
-                              |> unbox))
-      else None) l
+          if op_name = op then
+            Some (e, eargs,
+                  Bindlib.(bind_mvar v
+                             (op_ op_name (box_type op_in) (box_type op_out))
+                           |> unbox))
+          else None) l
     ) ctx.effects, ctx
+
+let lookup_con con ctx =
+  List.find_map (fun (c, { targs; cons }) ->
+      List.find_map (fun (con', l) ->
+          if con' = con then
+            Some (c, targs, l)
+          else None) cons
+    ) ctx.data, ctx
 
 let add_binding b = fun ctx ->
   (), ctx <: b

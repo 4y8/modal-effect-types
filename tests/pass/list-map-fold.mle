@@ -1,0 +1,37 @@
+type list a = Nil | Cons of a, list a
+type unit = Unit
+
+val map : forall a b . [] ((a -> b) -> list a -> list b)
+let map f l =
+  match l with
+  | Nil -> Nil
+  | Cons (hd, tl) -> Cons (f hd, map f tl)
+  end
+
+val fold_left : forall a acc . [] ((acc -> a -> acc) -> acc -> list a -> acc)
+let fold_left f acc l =
+  match l with
+  | Nil -> acc
+  | Cons (hd, tl) -> fold_left f (f acc hd) tl
+  end
+
+val fold_right : forall a acc . []((a -> acc -> acc) -> list a -> acc -> acc)
+let fold_right f l acc =
+  match l with
+  | Nil -> acc
+  | Cons (hd, tl) -> f hd (fold_right f tl acc)
+  end
+
+val iter : forall a . []((a -> unit) -> list a -> unit)
+let iter f l =
+  match l with
+  | Nil -> ()
+  | Cons (hd, tl) ->
+    f hd; iter f tl
+  end
+
+eff gen = yield : int => unit
+
+val f : [gen](unit -> unit)
+let f () = do yield 1
+

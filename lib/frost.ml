@@ -57,7 +57,7 @@ let subst_suffix xi s =
 let guess_mono =
   let rec aux l = function
     | MFlex v -> l, MFlex v
-    | PFlex v -> l, PFlex v
+    | PFlex _ -> failwith "impossible"
     | TVar v -> l, TVar v
     | ECtx (d, eps) ->
       let l, d = aux_eff_ext l d in
@@ -587,6 +587,63 @@ let sub_mod mu nu f = match mu, nu with
     return Effects.(eq_mask l l')
   | _, _ -> return false
 
+let rec join_eff_ext d d' = match d with
+  | [] -> return (Some d')
+  | { eff_name; eff_args } as hd :: d ->
+    match Effects.find_label_eff eff_name d' with
+    | None ->
+      join_eff_ext d d' >>= begin function
+        | None -> return None
+        | Some e -> return (Some (hd :: e))
+      end
+    | Some ({ eff_args = eff_args'; _ }, d') ->
+      let* _ = M.Array.map2 (=~) eff_args eff_args' in
+      join_eff_ext d d' >>= function
+        | None -> return None
+        | Some e -> return (Some (hd :: e))
+
+let join_eff_ctx (d, eps) (d', eps') =
+  join_eff_ext d d' >>= function
+  | None -> return None
+  | Some d ->
+    match eps, eps' with
+    | None, eps
+    | eps, None -> return (Some (d, eps))
+    | Some eps, Some eps' when Effects.eq_eff_var eps eps' ->
+      return (Some (d, Some eps))
+    | _, _ -> return None
+
+let rec meet_eff e e' = match e with
+  | [] -> return (Some [])
+  | { eff_name; eff_args } as hd :: e ->
+    match Effects.find_label_eff eff_name e' with
+    | None -> meet_eff e e'
+    | Some ({ eff_args = eff_args'; _ }, e') ->
+      let* _ = M.Array.map2 (=~) eff_args eff_args' in
+      meet_eff e e' >>= function
+      | None -> return None
+      | Some e -> return (Some (hd :: e))
+
+let join_mod m m' f = match m, m' with
+  | MAbs e, MAbs e' ->
+    join_eff_ctx e e' >>= begin function
+    | None -> return None
+    | Some e -> return (Some (MAbs e))
+    end
+  | MAbs e, MRel (l, d) | MRel (l, d), MAbs e ->
+    sub_eff_ctx e Effects.(extend d (remove_labels f l)) >>= begin function
+    | true -> return (Some (MRel (l, d)))
+    | false -> return None
+    end
+  | MRel (l, d), MRel (l', d') ->
+    meet_eff d d' >>= function
+    | None -> return None
+    | Some d'' ->
+      let mu = MRel (Effects.meet_mask l l', d'') in
+      sub_mod m mu f &&& sub_mod m' mu f >>= function
+      | true -> return (Some mu)
+      | false -> return None
+
 let rec broom loc m n s e =
   let* gp = is_guarded (sk_of_mode m) in
   let* gs = is_guarded s in
@@ -669,14 +726,14 @@ let rec broom loc m n s e =
   (* SI-FlexPoly *)
   | Fun _, n, PFlex a ->
     rule "SI-FlexPoly" >>
-    let* s = broom_flex_poly loc [] m n a e in
-    end_rule s
+    broom_flex_poly loc [] m n a e >>=
+    end_rule
 
   (* SI-FlexPoly *)
   | Check _, n, PFlex a when not gs ->
     rule "SI-FlexPoly" >>
-    let* s = broom_flex_poly loc [] m n a e in
-    end_rule s
+    broom_flex_poly loc [] m n a e >>=
+    end_rule
 
   (* SI-Check *)
   | Check a, Ty, t when gs && gp ->
@@ -689,7 +746,8 @@ let rec broom loc m n s e =
     rule "SI-UnivGhostR" >>
     end_rule (UGhost s)
 
-  | _ -> failwith "broom: todo"
+  | mode, _, s ->
+    Errors.type_mismatch loc ~expected:(sk_of_mode mode) ~got:s
 
 and broom_flex_poly loc xi m n alpha e =
   let* b = pop_binding () in
@@ -781,6 +839,40 @@ let rec split_fun_check loc a e = match a with
     split_fun_check loc a e
   | TArr (a, b) -> return (a, b, e)
   | a -> Errors.function_non_arr loc a
+
+let app_of_con loc c l =
+  List.fold_left (fun m n -> { sexpr = SApp (m, n) ; loc = m.loc })
+    { sexpr = SVar c; loc = loc } l
+
+let rec split_pat vars mu e a { spat; ploc } =
+  let nu, g = get_guarded a in
+  let mu = Effects.compose mu nu in
+  match spat with
+  | SPWild -> return (vars, PWild)
+  | SPVar x ->
+    let* v = fresh_var x (TMod (mu, g)) in
+    return (v :: vars, PVar (TMod (mu, g)))
+  | SPCons (con, pats) ->
+    lookup_con con >>= function
+    | None -> Errors.unknown_cons ploc con None
+    | Some (c, targs, l) ->
+      let* _, args =
+        sub ploc (Check g) Ty (TCon (c, Array.make (List.length targs) Ghost))
+          Effects.(apply_mod mu e) $> Type.split_cons None in
+      let l = Bindlib.msubst l args in
+      let* res, l = M.List.fold_right (fun (a, p) (vars, l) ->
+          split_pat vars mu e a p $> Pair.map_snd (fun x -> x :: l))
+          (List.combine l pats) (vars, []) in
+      return (res, PCon (con, l))
+
+let join loc f a b =
+  let mu, a = get_guarded a in
+  let nu, b = get_guarded b in
+  join_mod mu nu f >>= function
+  | None -> Errors.mod_mismatch loc ~expected:mu ~got:nu f
+  | Some mu ->
+    let* a = a =~ b in
+    return (TMod (mu, a)) 
 
 let rec sk_infer m { sexpr; loc } e = match m, sexpr with
   (* PI-Unit *)
@@ -885,23 +977,42 @@ let rec sk_infer m { sexpr; loc } e = match m, sexpr with
     end_rule q'
 
   (* NEW *)
-  (* PI-Do *) 
+  (* PI-Do *)
   | mode, SDo (op, m) ->
     rule "PI-Do" >>
-    let* p = sk_infer (Check Ghost) m e in
-    let* _, kinds, bop = lookup_op op >>= function
+    let* eff, _, bop = lookup_op op >>= function
       | None -> Errors.unknown_eff loc op
       | Some p -> return p
     in
-    let* vars = fresh_mflexs kinds in
-    let { op_in; op_out; _ } = Bindlib.msubst bop
-        (Array.map (fun a -> MFlex a) vars) in
-    let* _ = sub loc (Check p) Sk op_in e in
+    let { eff_args; _ }, _ = Option.get (Effects.find_label_eff eff (fst e)) in
+    let { op_out; op_in; _ } = Bindlib.msubst bop eff_args in
+    (* Clarify these two lines, they might solve some variables, but what we
+    really want is returning effect contexts*)
+    let* p = sk_infer (Check Ghost) m e in
+    let* _ = sub loc (Check p) Ty op_in e in
     sub loc mode Sk op_out e >>= end_rule
 
+  (* PI-Handle *)
   | mode, SHand (m, _, _, (h, (x, n))) ->
     ignore (mode, m, h, x, n);
-    return Ghost
+    rule "PI-Handle" >>
+    end_rule Ghost
+
+  (* PI-Match *)
+  | mode, SMatch (m, l) ->
+    ignore (mode, m, l);
+    rule "PI-Match" >>
+    end_rule Ghost
+
+  (* PI-Con *)
+  | mode, SCons (c, l) ->
+    rule "PI-Con" >>
+    let* p = sk_infer mode (app_of_con loc c l) e in
+    begin match mode with
+      | Check _ -> end_rule (UGhost p)
+      | _ -> end_rule p
+    end
+
   (* END NEW *) 
 
   | _, _ -> Errors.cannot_infer_expr loc
@@ -936,7 +1047,6 @@ let rec finfer m { sexpr; loc } e = match m, sexpr with
         match a with
         | None -> Errors.no_access loc x v e
         | Some a ->
-          Format.printf "%a@." Pprint.ty a;
           let* b = sub loc m Ty a e in
           end_rule (b , Var v)
         (* END NEW *)
@@ -1020,7 +1130,7 @@ let rec finfer m { sexpr; loc } e = match m, sexpr with
     end_rule (b, Do (op, m))
 
   (* I-Handle *)
-  | (Check _) as mode, SHand (m, None, _, (h, (x, n))) ->
+  | mode, SHand (m, None, _, (h, (x, n))) ->
     rule "I-Handle" >>
     let* eff_name, eargs, _ = lookup_op (fst (List.hd h)) >>= function
       | Some x -> return x
@@ -1048,12 +1158,34 @@ let rec finfer m { sexpr; loc } e = match m, sexpr with
         protect_context @@
         let* pi = fresh_var pi ai in
         let* ri = fresh_var ri (TArr (bi, b)) in
-        let* _, ni = finfer mode ni e in
-        return (li, Bindlib.(box_expr ni |> bind_var ri |> bind_var pi
-                             |> unbox))
+        let* bi, ni = finfer mode ni e in
+        return (bi, (li, Bindlib.(box_expr ni |> bind_var ri |> bind_var pi
+                             |> unbox)))
     in
-    let* h = M.List.map check_clause h in
+    let* b', h = M.List.map check_clause h $> List.split in
+    let* b = M.List.fold_left (join loc e) b b' in
     end_rule (b, Hand (m, ops, n, h))
+
+  (* I-Con *)
+  | mode, SCons (c, l) ->
+    rule "I-Con" >>
+    finfer mode (app_of_con loc c l) e >>=
+    end_rule
+
+  (* I-Match *)
+  | mode, SMatch (m, l) -> 
+    rule "I-Match" >>
+    let* b, m = finfer (Infer Ghost) m e in
+    let check_branch (p, n) =
+      protect_context @@
+      let* vars, p = split_pat [] Effects.id e b p in
+      let mvar = Array.of_list vars in
+      let* a, n = finfer mode n e in
+      return (a, (p, Bindlib.(n |> box_expr |> bind_mvar mvar |> unbox)))
+    in
+    let* a, l = M.List.map check_branch l $> List.split in
+    let* a = M.List.fold_left (join loc e) Ghost a in
+    return (a, Match (m, l))
 
   (* END NEW *)
 

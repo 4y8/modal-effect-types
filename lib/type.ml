@@ -508,6 +508,22 @@ let check_decl (prog, ctx) d = match d with
            let l = List.map (fun a -> box_type (fst (check_type a ctx'))) l
                 |> Bindlib.box_list in
            c, Bindlib.(bind_mvar mvar l |> unbox)) l in
+    (* NEW *)
+    let _, ctx = M.List.iter
+        (fun (c, l) ->
+           let v, types = Bindlib.unmbind l in
+           let a = List.fold_right (fun a b -> TArr (a, b)) types
+               (TCon (x, Array.map (fun v -> TVar v) v)) in
+           let a = TMod (MAbs ([], None), a) in
+           let v = Array.to_list v in
+           let* _ = fresh_var c @@
+             List.fold_right2
+               (fun v (_, k) a ->
+                  (TForA (k, Bindlib.(bind_var v (box_type a) |> unbox))))
+               v args a in
+           return ()
+        ) cons ctx in
+    (* END NEW *)
     prog, { ctx with data = (x, { targs; cons }) :: ctx.data }
 
 let _, init_ctx =

@@ -723,23 +723,23 @@ let rec broom loc m n s e =
     let* tau = alpha =~ sk_of_mode m in
     end_rule tau
 
-  (* SI-FlexPoly *)
-  | Fun _, n, PFlex a ->
-    rule "SI-FlexPoly" >>
-    broom_flex_poly loc [] m n a e >>=
-    end_rule
-
-  (* SI-FlexPoly *)
-  | Check _, n, PFlex a when not gs ->
-    rule "SI-FlexPoly" >>
-    broom_flex_poly loc [] m n a e >>=
-    end_rule
-
   (* SI-Check *)
   | Check a, Ty, t when gs && gp ->
     rule "SI-Check" >>
     let* _ = t =~ a in
     end_rule a
+
+  (* SI-FlexPoly *)
+  | Check _, n, PFlex a ->
+    rule "SI-FlexPoly" >>
+    broom_flex_poly loc [] m n a e >>=
+    end_rule
+    
+  (* SI-FlexPoly *)
+  | Fun _, n, PFlex a ->
+    rule "SI-FlexPoly" >>
+    broom_flex_poly loc [] m n a e >>=
+    end_rule
 
   (* SI-UnivGhostR *)
   | Check Ghost, Sk, s when gs && not (is_flex_var s) ->
@@ -879,8 +879,7 @@ let rec sk_infer m { sexpr; loc } e = match m, sexpr with
   | m, SCons ("Unit", []) ->
     rule "PI-Unit" >>
     let* q = sub loc m Sk (TCon ("unit", [||])) e in
-    end_rule () >>
-    return q
+    end_rule q
 
   | m, SInt _ ->
     rule "PI-Int" >>
@@ -901,7 +900,7 @@ let rec sk_infer m { sexpr; loc } e = match m, sexpr with
         match q with
         | None -> Errors.no_access loc x v e
         | Some q ->
-        sub loc m Sk q e >>= end_rule
+          sub loc m Sk q e >>= end_rule
         (* END NEW *)
     end
 
@@ -1032,7 +1031,7 @@ let rec finfer m { sexpr; loc } e = match m, sexpr with
   | m, SStr s ->
     rule "I-Str" >>
     let* a = sub loc m Ty (TCon ("string", [||])) e in
-    return (a, Lit (Str s))
+    end_rule (a, Lit (Str s))
 
   (* I-Var *)
   | m, SVar x ->
@@ -1185,7 +1184,7 @@ let rec finfer m { sexpr; loc } e = match m, sexpr with
     in
     let* a, l = M.List.map check_branch l $> List.split in
     let* a = M.List.fold_left (join loc e) Ghost a in
-    return (a, Match (m, l))
+    end_rule (a, Match (m, l))
 
   (* END NEW *)
 

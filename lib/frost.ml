@@ -682,9 +682,9 @@ let rec broom loc m n s e =
     rule "SI-ModR" >>
     let mu, a = get_guarded a' in
     let nu, s = get_guarded s' in
-    unless (sub_mod nu mu e)
-      (fun () -> Errors.mod_mismatch loc ~expected:mu ~got:nu e) >>
     let* s = broom loc (Check a) n s (Effects.apply_mod mu e) in
+      unless (is_abs s ||| sub_mod nu mu e)
+        (fun () -> Errors.mod_mismatch loc ~expected:mu ~got:nu e) >>
     let rec get_mod_list a b = match a with
       | TMod (mu, a) -> TMod (mu, get_mod_list a b)
       | _ -> b

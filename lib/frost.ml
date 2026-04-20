@@ -844,6 +844,9 @@ let app_of_con loc c l =
   List.fold_left (fun m n -> { sexpr = SApp (m, n) ; loc = m.loc })
     { sexpr = SVar c; loc = loc } l
 
+let let_of_seq loc m n =
+  { sexpr = SLet ("_", { sexpr = SAnn (m, { stype = STCons ("unit", []) ; tloc = None }); loc = m.loc }, n ); loc }
+
 let rec split_pat vars mu e a { spat; ploc } =
   let nu, g = get_guarded a in
   let mu = Effects.compose mu nu in
@@ -1011,6 +1014,16 @@ let rec sk_infer m { sexpr; loc } e = match m, sexpr with
       | Check _ -> end_rule (UGhost p)
       | _ -> end_rule p
     end
+
+  (* PI-Let *)
+  | mode, SLet (x, m, n) ->
+    rule "PI-Let" >>
+    let* s = sk_infer (Infer Ghost) m e in
+    protect_context @@
+    let* _ = fresh_var x s in
+    (sk_infer mode n e >>= end_rule)
+  | mode, SSeq (m, n) ->
+    sk_infer mode (let_of_seq loc m n) e
 
   (* END NEW *) 
 
@@ -1185,6 +1198,19 @@ let rec finfer m { sexpr; loc } e = match m, sexpr with
     let* a, l = M.List.map check_branch l $> List.split in
     let* a = M.List.fold_left (join loc e) Ghost a in
     end_rule (a, Match (m, l))
+
+  (* I-Let *)
+  | mode, SLet (x, m, n) ->
+    rule "I-Let" >>
+    let* a, m = finfer (Infer Ghost) m e in
+    let* b, n, v = protect_context @@
+      let* v = fresh_var x a in
+      let* b, n = finfer mode n e in
+      return (b, n, v)
+    in
+    end_rule (b, Let (m, a, Bindlib.(box_expr n |> bind_var v |> unbox)))
+  | mode, SSeq (m, n) ->
+    finfer mode (let_of_seq loc m n) e
 
   (* END NEW *)
 

@@ -65,7 +65,7 @@ let next ps =
   | Cons (Proc (p), ps') -> p ps'
   end
 
-val schedule : []((unit -> unit) -> list proc -> unit)
+val schedule : [](<coop>(unit -> unit) -> list proc -> unit)
 let schedule m =
   handle m () with
   | return u => fun ps -> next ps

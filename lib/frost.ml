@@ -994,7 +994,7 @@ let rec sk_infer m { sexpr; loc } e = match m, sexpr with
     (* Clarify these two lines, they might solve some variables, but what we
     really want is returning effect contexts*)
     let* p = sk_infer (Check Ghost) m e in
-    let* _ = sub loc (Check p) Ty op_in e in
+    let* _ = op_in =~ p in
     sub loc mode Sk op_out e >>= end_rule
 
   (* PI-Handle *)

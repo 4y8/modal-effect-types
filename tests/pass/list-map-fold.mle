@@ -32,6 +32,8 @@ let iter f l =
 
 eff gen = yield : int => unit
 
-val f : [gen](unit -> unit)
-let f () = do yield 1
+val yield_int : [gen](int -> unit)
+let yield_int x = do yield x
 
+val yield_ints : [gen](list int -> unit)
+let yield_ints l = iter yield_int l

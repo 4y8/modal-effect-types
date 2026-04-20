@@ -266,7 +266,7 @@ let rec get_kind ?(seen_adt=[]) = function
   | TCon (c, _) when List.mem c seen_adt -> return Abs
   | TCon (c, arr) ->
     let seen_adt = c :: seen_adt in
-    let* {cons; _} = get_data c in
+    let* { cons; _ } = get_data c in
     let types = List.map (fun (_, b) -> Bindlib.msubst b arr) cons |>
       List.flatten in
     let* abs = M.List.for_all

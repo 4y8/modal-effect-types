@@ -691,7 +691,10 @@ let rec broom loc m n s e =
     in
     end_rule (get_mod_list a' s)
   | Check a, n, (TMod _ as s) ->
-    broom loc (Check (TMod (Effects.id, a))) n s e
+    broom loc (Check (TMod (Effects.id, a))) n s e >>= begin function
+      | TMod (MRel ([], []), a) -> return a
+      | _ -> failwith "broom: internal error"
+    end
   | Check (TMod _) as m, Ty, t when not (is_pflex t) ->
     broom loc m n (TMod (Effects.id, t)) e
 

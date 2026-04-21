@@ -704,9 +704,9 @@ let rec broom loc m n s e =
     broom loc m Sk s e >>=
     end_rule
 
-  (* SI-ModFunTy *)
+  (* SI-ModFun-Ty *)
   | (Fun _), Ty, (TMod _ as s) -> 
-    rule "SI-ModFunTy" >>
+    rule "SI-ModFun-Ty" >>
     let mu, s = get_guarded s in
     unless (sub_mod mu Effects.id e)
       (fun () ->
@@ -714,9 +714,9 @@ let rec broom loc m n s e =
     let* s' = broom loc m n s e in
     end_rule s'
 
-  (* SI-ModFunSk *)
+  (* SI-ModFun-Sk *)
   | (Fun _), Sk, (TMod (_, s)) ->
-    rule "SI-ModFunSk" >>
+    rule "SI-ModFun-Sk" >>
     broom loc m Sk s e >>=
     end_rule
   (* END NEW *) 
@@ -1003,31 +1003,70 @@ let rec sk_infer m { sexpr; loc } e = match m, sexpr with
 
   (* NEW *)
   (* PI-Do *)
-  | mode, SDo (op, m) ->
+  | mode, SDo (op, _) ->
+    (* The interaction of skeleton inference and the effect context is complex
+    we might be under a universal ghost, who could introduce the effect we are
+    looking for. We stay conservative for now *)
     rule "PI-Do" >>
-    let* eff, _, bop = lookup_op op >>= function
+    let* _, args, bop = lookup_op op >>= function
       | None -> Errors.unknown_eff loc op
       | Some p -> return p
     in
-    let { eff_args; _ }, _ = Option.get (Effects.find_label_eff eff (fst e)) in
-    let { op_out; op_in; _ } = Bindlib.msubst bop eff_args in
-    (* Clarify these two lines, they might solve some variables, but what we
-    really want is returning effect contexts*)
-    let* p = sk_infer (Check Ghost) m e in
-    let* _ = op_in =~ p in
-    sub loc mode Sk op_out e >>= end_rule
+    let { op_out; _ } = Bindlib.msubst bop
+        (Array.make (List.length args) Ghost) in
+    sub loc mode Sk op_out e >>= 
+    end_rule
 
   (* PI-Handle *)
-  | mode, SHand (m, _, _, (h, (x, n))) ->
-    ignore (mode, m, h, x, n);
+  | mode, SHand (_, _, _, (h, (x, n))) ->
     rule "PI-Handle" >>
-    end_rule Ghost
+    let* eff_name, args, _ = lookup_op (fst (List.hd h)) >>= function
+      | Some x -> return x
+      | None ->
+        let (op, (loc, _, _, _)) = List.hd h in
+        Errors.unknown_eff loc op
+    in
+    let d = [{ eff_name; eff_args = Array.make (List.length args) Ghost }] in
+    let* ops = Type.unfold_ext d in
+    let* p = protect_context @@
+      let* _ = fresh_var x (TMod (MRel ([], d), Ghost)) in
+      sk_infer mode n e
+    in
+    let sk_infer_clause (li, (loc, pi, ri, ni)) =
+      match Effects.get_op li ops with
+      | None -> Errors.unknown_eff loc li
+      | Some (ai, bi) ->
+        protect_context @@
+        let* _ = fresh_var pi ai in
+        let* _ = fresh_var ri (TArr (bi, p)) in
+        sk_infer mode ni e
+    in
+    let* p' = M.List.map sk_infer_clause h in
+    M.List.fold_left (=~) p p' >>=
+    end_rule
 
   (* PI-Match *)
   | mode, SMatch (m, l) ->
     ignore (mode, m, l);
     rule "PI-Match" >>
-    end_rule Ghost
+    let rec split_pat p { spat; ploc } = match spat with
+      | SPWild -> return ()
+      | SPVar x ->
+        let* _ = fresh_var x p in return ()
+      | SPCons (con, l) ->
+        let* c, args, bp = lookup_con con >>= function
+          | None -> Errors.unknown_cons ploc con None
+          | Some x -> return x
+        in
+        let* targs = TCon (c, Array.make (List.length args) Ghost) =~ p
+                     $> Type.split_cons None $> snd in
+        M.List.iter2 split_pat (Bindlib.msubst bp targs) l
+    in
+    let* p = sk_infer (Infer Ghost) m e in
+    M.List.map (fun (pat, n) ->
+        protect_context @@ (split_pat p pat >> sk_infer mode n e)) l >>=
+    M.List.fold_left (=~) Ghost >>=
+    end_rule
 
   (* PI-Con *)
   | mode, SCons (c, l) ->

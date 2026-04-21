@@ -83,11 +83,16 @@ module M = struct
         let* x = f hd hd' in
         let* xs = map2 f tl tl' in
         return (x :: xs)
-      | _, _ -> failwith "internal error: map2"
+      | _, _ -> failwith "map2: internal error"
 
     let rec iter f = function
       | [] -> return ()
       | hd :: tl -> f hd >> iter f tl
+    
+    let rec iter2 f l l' = match l, l' with
+      | [], [] -> return ()
+      | hd :: tl, hd' :: tl' -> f hd hd' >> iter2 f tl tl'
+      | _, _ -> failwith "iter2: internal error"
 
     let rec fold_right f l acc = match l with
       | [] -> return acc

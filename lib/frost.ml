@@ -698,13 +698,7 @@ let rec broom loc m n s e =
   | Check (TMod _) as m, Ty, t when not (is_pflex t) ->
     broom loc m Ty (TMod (Effects.id, t)) e
 
-  (* SI-ModL *)
-  | Check _ as m, Sk,TMod (_, s) ->
-    rule "SI-ModL" >>
-    broom loc m Sk s e >>=
-    end_rule
-
-  (* SI-ModFun-Ty *)
+  (* SI-ModFun *)
   | (Fun _), Ty, (TMod _ as s) -> 
     rule "SI-ModFun-Ty" >>
     let mu, s = get_guarded s in
@@ -714,8 +708,8 @@ let rec broom loc m n s e =
     let* s' = broom loc m n s e in
     end_rule s'
 
-  (* SI-ModFun-Sk *)
-  | (Fun _), Sk, (TMod (_, s)) ->
+  (* SI-Mod-Sk *)
+  | (Fun _ | Check _), Sk, TMod (_, s) ->
     rule "SI-ModFun-Sk" >>
     broom loc m Sk s e >>=
     end_rule
@@ -895,17 +889,10 @@ let join loc f a b =
     return (TMod (mu, a)) 
 
 let rec sk_infer m { sexpr; loc } e = match m, sexpr with
-  (* PI-Unit *)
-  | m, SCons ("Unit", []) ->
-    rule "PI-Unit" >>
-    let* q = sub loc m Sk (TCon ("unit", [||])) e in
-    end_rule q
-
   | m, SInt _ ->
     rule "PI-Int" >>
     let* q = sub loc m Sk (TCon ("int", [||])) e in
     end_rule q
-
 
   | m, SStr _ ->
     rule "PI-Str" >>
@@ -915,10 +902,13 @@ let rec sk_infer m { sexpr; loc } e = match m, sexpr with
   (* PI-Var *)
   | m, SVar x ->
     rule "PI-Var" >>
-    let* id = lookup_id x in
-    begin match id with
+    lookup_id x >>= begin function
       | None -> Errors.unknown_var loc x
       | Some v ->
+        let* _, q, _ = get_type_context v in
+        sub loc m Sk q e >>= end_rule
+        
+        (*
         let* _, q, gamma' = get_type_context v in
         (* NEW *)
         let nu, f = locks e gamma' in
@@ -927,7 +917,7 @@ let rec sk_infer m { sexpr; loc } e = match m, sexpr with
         | None -> Errors.no_access loc x v e
         | Some q ->
           sub loc m Sk q e >>= end_rule
-        (* END NEW *)
+        (* END NEW *) *) 
     end
 
   (* PI-Anno *)
@@ -1018,7 +1008,7 @@ let rec sk_infer m { sexpr; loc } e = match m, sexpr with
     end_rule
 
   (* PI-Handle *)
-  | mode, SHand (_, _, _, (h, (x, n))) ->
+  | mode, SHand (m, _, _, (h, (x, n))) ->
     rule "PI-Handle" >>
     let* eff_name, args, _ = lookup_op (fst (List.hd h)) >>= function
       | Some x -> return x
@@ -1026,10 +1016,11 @@ let rec sk_infer m { sexpr; loc } e = match m, sexpr with
         let (op, (loc, _, _, _)) = List.hd h in
         Errors.unknown_eff loc op
     in
+    let* p = sk_infer (Infer Ghost) m e in
     let d = [{ eff_name; eff_args = Array.make (List.length args) Ghost }] in
     let* ops = Type.unfold_ext d in
     let* p = protect_context @@
-      let* _ = fresh_var x (TMod (MRel ([], d), Ghost)) in
+      let* _ = fresh_var x (TMod (MRel ([], d), p)) in
       sk_infer mode n e
     in
     let sk_infer_clause (li, (loc, pi, ri, ni)) =

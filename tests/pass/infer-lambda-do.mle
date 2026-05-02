@@ -1,0 +1,7 @@
+type unit = Unit
+
+eff gen [a] = yield : a => unit
+
+val f : forall [a] . (<gen a>{unit}) -> a
+
+let infer = f { do yield () }

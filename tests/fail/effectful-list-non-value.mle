@@ -1,0 +1,8 @@
+type unit = Unit
+type list a = Nil | Cons of a, list a
+eff gen = yield : int => unit
+
+val f : [gen](unit -> (unit -> unit))
+
+val l : [gen](list (unit -> unit))
+let l = Cons (f!, Nil)

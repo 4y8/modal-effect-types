@@ -222,7 +222,8 @@ let rec check ({loc; sexpr} as m) a e =
   | SMask (l, m), TMod (MRel (l', []), a)
     when Effects.eq_mask (List.split l |> fst) l' ->
     let l, _ = List.split l in
-    let* m = check m a (Effects.remove_labels e l) in
+    let* m = with_binding (Lock (MRel (l, []), e)) @@
+      check m a (Effects.remove_labels e l) in
     return @@ Mask (l, m)
 
   (* B-HandlerCheck *)
@@ -384,7 +385,8 @@ and infer {loc; sexpr} e =
           unknown_eff loc l;
         return ()) l >>
     let l, _ = List.split l in
-    let* m, a = infer m (Effects.remove_labels e l) in
+    let* m, a = with_binding (Lock (MRel (l, []), e)) @@
+      infer m (Effects.remove_labels e l) in
     let* lext = M.List.map (fun l ->
         let* { eops; _ } = get_eff l in
         return @@

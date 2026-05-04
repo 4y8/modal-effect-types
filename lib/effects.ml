@@ -2,17 +2,24 @@ open Syntax
 
 let erase_types = List.map (fun { eff_name; _ } -> eff_name)
 
-let rec get_first f = function
+let rec get_first f ?(skippable = fun _ -> true) = function
   | [] -> None
   | hd :: tl when f hd -> Some (hd, tl)
-  | hd :: tl ->
+  | hd :: tl when skippable hd ->
     Option.map (fun (x, l) -> x, hd :: l) (get_first f tl)
+  | _ -> None
 
 let find_label_mask lab mask =
   Option.map snd (get_first ((=) lab) mask)
 
-let find_label_eff lab =
-  get_first (fun {eff_name; _} -> eff_name = lab)
+let find_label_eff lab d eff_ho =
+  if eff_ho then
+    match d with
+    | { eff_name; _ } as hd :: tl when eff_name = lab -> Some (hd, tl)
+    | _ -> None
+  else
+    get_first (fun { eff_name; _ } -> eff_name = lab)
+      ~skippable:(fun { eff_ho; _ } -> eff_ho) d
 
 let rec remove_labels_ext d l = match d with
   | [] -> ([], l)
@@ -114,8 +121,8 @@ let eq_eff_var (eps, l) (eps', l') = match eps, eps' with
 let rec sub_eff d d' =
   match d with
   | [] -> true
-  | { eff_args; eff_name } :: tl ->
-    match find_label_eff eff_name d' with
+  | { eff_args; eff_name; eff_ho } :: tl ->
+    match find_label_eff eff_name d' eff_ho with
     | None -> false
     | Some ({ eff_args = eff_args'; _ }, d') ->
       Array.for_all2 eq_ty eff_args eff_args' && sub_eff tl d'
@@ -168,8 +175,8 @@ let rec get_op l = function
 
 let rec join_eff_ext d d' = match d with
   | [] -> Some d'
-  | { eff_name; eff_args } as hd :: d ->
-    match find_label_eff eff_name d' with
+  | { eff_name; eff_args; eff_ho } as hd :: d ->
+    match find_label_eff eff_name d' eff_ho with
     | None -> Option.map (fun e -> hd :: e) (join_eff_ext d d')
     | Some ({ eff_args = eff_args'; _ }, d') when
         Array.for_all2 eq_ty eff_args eff_args' ->
@@ -188,8 +195,8 @@ let join_eff_ctx (d, eps) (d', eps') =
 
 let rec meet_eff e e' = match e with
   | [] -> Some []
-  | { eff_name; eff_args } as hd :: e ->
-    match find_label_eff eff_name e' with
+  | { eff_name; eff_args; eff_ho } as hd :: e ->
+    match find_label_eff eff_name e' eff_ho with
     | None -> meet_eff e e'
     | Some ({ eff_args = eff_args'; _ }, e') when
         Array.for_all2 eq_ty eff_args eff_args' ->

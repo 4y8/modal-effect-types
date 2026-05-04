@@ -75,35 +75,26 @@ and check_mod m = match m.smod with
     let* d = check_effect_ext d in
     return @@ MRel (l, d)
 
-and check_effect { seff_name; seff_args; eloc } args_kind t =
+and check_effect { seff_name; seff_args; eloc } args_kind eff_ho =
   if List.length args_kind <> List.length seff_args then
     nb_arg_mismatch eloc seff_name (List.length args_kind) seff_args;
   let* eff_args = M.List.map2 check_type_kind seff_args args_kind
     $> Array.of_list in
-  let ectx = Bindlib.msubst t eff_args in
-  M.List.iter (fun { op_in; op_out; _ } ->
-      unless (is_abs op_in)
-        (fun () ->
-           Format.printf "%a@." Pprint.ty op_in;
-           kind_mismatch eloc op_in ~expected:Abs ~got:Any) >>
-      unless (is_abs op_out)
-        (fun () ->
-           kind_mismatch eloc op_out ~expected:Abs ~got:Any)) ectx >>
-  return { eff_name = seff_name; eff_args }
+  return { eff_name = seff_name; eff_args; eff_ho }
 
 and check_effect_ext l =
   M.List.map (fun ({ seff_name; eloc; _ } as seff) ->
       let* eff = lookup_eff seff_name in
       match eff with
       | None -> unknown_eff eloc seff_name
-      | Some { eargs ; eops } -> check_effect seff eargs eops) l
+      | Some { eargs; eho; _ } -> check_effect seff eargs eho) l
 
 and check_effect_ctx l =
   M.List.fold_right (fun ({ seff_name; eloc; _ } as seff) (d, eps) ->
       let* eff = lookup_eff seff_name in
       match eff with
-      | Some { eargs ; eops } ->
-        let* e = check_effect seff eargs eops in
+      | Some { eargs; eho; _ } ->
+        let* e = check_effect seff eargs eho in
         return (e :: d, eps)
       | None ->
         let* v = lookup_tid seff_name in
@@ -177,7 +168,7 @@ let rec split_pat vars mu t { spat; ploc } =
     in return (res, PCon (c, l))
 
 let unfold_ext d =
-  M.List.map (fun { eff_name; eff_args } ->
+  M.List.map (fun { eff_name; eff_args; _ } ->
       let* { eops; _ } = get_eff eff_name in
       return @@ Bindlib.msubst eops eff_args) d $> List.flatten $>
   List.map (fun { op_name; op_in; op_out } ->
@@ -226,23 +217,16 @@ let rec check ({loc; sexpr} as m) a e =
     return @@ Mask (l, m)
 
   (* B-HandlerCheck *)
-  | SHand (m, Some d, mu, (l, (x, n))), a ->
+  | SHand (m, Some d, (l, (x, n))), a ->
     let b = a in (* stay consistent with the paper *)
-    let f = e in
-    let* mu = M.List.map check_mod mu
-      $> List.fold_left Effects.compose Effects.id in
-    if not Effects.(sub_mod mu id f) then
-      no_unboxing loc mu f;
-    let e = Effects.apply_mod mu f in
     let* d = check_effect_ext d in
     let* ops = unfold_ext d in
     let nu = MRel ([], d) in
-    with_binding (Lock (mu, f)) @@
     let* m, a = with_binding (Lock (nu, e)) @@
       infer m (Effects.extend d e) in
     let* ret, n =
       protect_context @@
-      let* ret = fresh_var x (TMod (Effects.compose mu nu, a)) in
+      let* ret = fresh_var x (TMod (nu, a)) in
       let* n = check n b e in
       return (ret, n)
     in
@@ -253,7 +237,7 @@ let rec check ({loc; sexpr} as m) a e =
       | Some (ai, bi) ->
         protect_context @@
         let* pi = fresh_var pi ai in
-        let* ri = fresh_var ri (TMod (mu, TArr (bi, b))) in
+        let* ri = fresh_var ri (TArr (bi, b)) in
         let* ni = check ni b e in
         return (li, Bindlib.(box_expr ni |> bind_var ri |> bind_var pi
                              |> unbox))
@@ -393,34 +377,26 @@ and infer {loc; sexpr} e =
     return (Do (l, m), b)
 
   (* B-HandlerInfer *)
-  | SHand (m, Some d, mu, (l, (x, n))) ->
-    let f = e in
-    let* mu = M.List.map check_mod mu
-      $> List.fold_left Effects.compose Effects.id in
-    if not Effects.(sub_mod mu id f) then
-      no_unboxing loc mu f;
-    let e = Effects.apply_mod mu f in
+  | SHand (m, Some d, (l, (x, n))) ->
     let* d = check_effect_ext d in
     let* ops = unfold_ext d in
     let nu = MRel ([], d) in
-    with_binding (Lock (mu, f)) @@
     let* m, a = with_binding (Lock (nu, e)) @@
       infer m (Effects.extend d e) in
     let* ret, n, b' =
       protect_context @@
-      let* ret = fresh_var x (TMod (Effects.compose mu nu, a)) in
+      let* ret = fresh_var x (TMod (nu, a)) in
       let* n, b' = infer n e in
       return (ret, n, b')
     in
     let n = Bindlib.(n|> box_expr |> bind_var ret |> unbox) in
-
     let infer_clause (li, (loc, pi, ri, ni)) =
       match Effects.get_op li ops with
       | None -> unknown_eff loc li
       | Some (ai, bi) ->
         protect_context @@
         let* pi = fresh_var pi ai in
-        let* ri = fresh_var ri (TMod (mu, TArr (bi, b'))) in
+        let* ri = fresh_var ri (TArr (bi, b')) in
         let* ni, bi = infer ni e in
         return ((li, Bindlib.(box_expr ni |> bind_var ri |> bind_var pi
                              |> unbox)), bi)
@@ -482,21 +458,22 @@ let check_decl (prog, ctx) d = match d with
                          ctx.gamma }
     in
     let m, _ = check e g ([], None) ctx' in (v, m) :: prog, ctx
-  | (x, SDEff (args, l)), _ ->
+  | (x, SDEff (eho, args, l)), _ ->
     (* add mock definition in the context just for type verification *)
     let eargs = snd (List.split args) in
     let mvar, ctx' = fresh_tvars args ctx in
     let dummy_ops = Bindlib.(box_list [] |> bind_mvar mvar |> unbox) in
-    let ctx' = { ctx' with effects = (x, { eargs; eops = dummy_ops }) ::
+    let ctx' = { ctx' with effects = (x, { eargs; eops = dummy_ops; eho }) ::
                                      ctx'.effects } in
+    let k = if eho then Any else Abs in
     let l =
       List.map (fun (x, (a, b)) ->
-          { op_name = x; op_in = fst (check_type a ctx')
-          ; op_out = fst (check_type b ctx') })
+          { op_name = x; op_in = fst (check_type_kind a k ctx')
+          ; op_out = fst (check_type_kind b k ctx') })
         l |> box_ops in
     prog,
     { ctx with
-      effects = (x, { eargs; eops = Bindlib.(bind_mvar mvar l |> unbox)}) ::
+      effects = (x, { eargs; eops = Bindlib.(bind_mvar mvar l |> unbox); eho}) ::
                 ctx.effects }
   | (x, SDADT (args, l)), _ ->
     (* add mock definition in the context just for type verification *)

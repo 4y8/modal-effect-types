@@ -61,8 +61,8 @@ exception End
 let rec sub_eff fmt d d' =
   match d with
   | [] -> ()
-  | { eff_args; eff_name } :: tl ->
-    match Effects.find_label_eff eff_name d' with
+  | { eff_args; eff_name; eff_ho } :: tl ->
+    match Effects.find_label_eff eff_name d' eff_ho with
     | None ->
       text fmt "effect %s appears more times in the wrong side" eff_name;
       raise End
@@ -95,15 +95,14 @@ let sub_eff_ctx fmt (d, eps) (d', eps') =
   | Some _, _ ->
     text fmt "there is an effect variable in the former but not in the latter"
 
-let rec extract fmt f = function
-  | [] -> ()
-  | l :: tl ->
-    match Effects.find_label_eff l f with
-    | None ->
-      text fmt "effect %s is not present" l;
-      raise End
-    | Some (_, f) -> extract fmt f tl
+let rec extract fmt d l = match d with
+  | [] -> if l <> [] then
+      (text fmt "effect %s is not present" (List.hd l); raise End)
+  | hd :: tl -> match Effects.find_label_mask hd.eff_name l with
+    | None -> extract fmt tl l
+    | Some l -> extract fmt tl l
 
+(* to fix *)
 let sub_mod fmt mu nu f = match mu, nu with
   | MAbs e, _ ->
     text fmt "%a should be a sub context of %a but "
@@ -191,6 +190,11 @@ let no_unboxing loc m e =
         mu m ectx e;
       try sub_mod fmt m Effects.id e
       with End -> ())
+
+let higher_order_effect_not_first loc op e =
+  error loc
+    (fun fmt -> text fmt "Operation %s is in a higher order effect which is not first in effect context %a"
+        op Pprint.ectx e)
 
 let two_effect_var loc =
   error loc

@@ -20,5 +20,5 @@ val append : [](forall a . list a -> list a -> list a)
 let append l l' =
   match l with
   | Nil -> l'
-  | Cons (hd, tl) -> Cons (l, append @a tl l')
+  | Cons (hd, tl) -> Cons (hd, append @a tl l')
   end

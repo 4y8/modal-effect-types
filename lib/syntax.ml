@@ -39,8 +39,7 @@ type surface_desc
   | SLet of string * surface_expr * surface_expr
   | SAppT of surface_expr * surface_type
   | SMask of (string * loc) list * surface_expr
-  | SHand of surface_expr * surface_effect list option * surface_mod list *
-             surface_handler
+  | SHand of surface_expr * surface_effect list option * surface_handler
   | SCons of string * surface_expr list
   | SMatch of surface_expr * (surface_pat * surface_expr) list
   | SFreeze of surface_expr
@@ -50,7 +49,7 @@ and surface_handler = (string * (loc * string * string * surface_expr)) list *
                       (string * surface_expr)
 
 type surface_decl
-  = SDEff of (string * kind) list *
+  = SDEff of bool * (string * kind) list *
              (string * (surface_type * surface_type)) list
   | SDSig of surface_type
   | SDFun of surface_expr
@@ -66,7 +65,7 @@ type pure_mod
   | MRel of string list * pure_effect list
 
 and pure_effect
-  = { eff_name : string ; eff_args : pure_type array }
+  = { eff_name : string ; eff_args : pure_type array ; eff_ho : bool }
 
 and effect_ctx
   = pure_effect list * (pure_type * string list) option
@@ -123,11 +122,11 @@ let rec box_type = function
   | PFlex v -> pflex_ v
 
 and box_effect_ext d =
-  let pure_effect_ eff_name args = Bindlib.box_apply
-      (fun eff_args -> { eff_name; eff_args }) (Bindlib.box_array args)
+  let pure_effect_ eff_name args eff_ho = Bindlib.box_apply
+      (fun eff_args -> { eff_name; eff_args; eff_ho }) (Bindlib.box_array args)
   in
-  let box_effect { eff_name; eff_args } =
-    pure_effect_ eff_name (Array.map box_type eff_args)
+  let box_effect { eff_name; eff_args; eff_ho } =
+    pure_effect_ eff_name (Array.map box_type eff_args) eff_ho
   in
   Bindlib.box_list (List.map box_effect d)
 

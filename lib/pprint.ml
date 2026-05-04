@@ -43,7 +43,7 @@ and ty_atom ctx fmt = function
   | Ghost -> fprintf fmt "👻"
   | a -> fprintf fmt "(%a)" (ty_fora ctx) a
 
-and eff ctx fmt {eff_name; eff_args} =
+and eff ctx fmt { eff_name; eff_args; _ } =
   if Array.length eff_args = 0 then
     fprintf fmt "%s" eff_name
   else

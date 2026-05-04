@@ -1,180 +1,40 @@
 type unit = Unit
-
+type list a = Nil | Cons of a, list a
 type bool = True | False
 
-type pair a b = Pair of a, b
-
-type option a = None | Some of a
-
-type list a = Nil | Cons of a, list a
-
-val rev_aux : forall a . [](list a -> list a -> list a)
-let rev_aux acc l =
+val append : forall a . [](list a -> list a -> list a)
+let append l l' =
   match l with
-  | Nil -> acc
-  | Cons (hd, tl) -> rev_aux @a (Cons (hd, acc)) tl
+  | Nil -> l'
+  | Cons (hd, tl) -> Cons (hd, append tl l')
   end
 
-val rev : forall a . [](list a -> list a)
-let rev l = rev_aux @a Nil l
+eff! state s = get : unit => s | put : s => unit
 
-val iter : forall a . []((a -> unit) -> list a -> unit)
-let iter f l =
-  match l with
+val state : forall s . [](<state s>{unit} -> <state s>s -> unit)
+let state m =
+  handle m! with
+  | return x => fun s -> x
+  | get () r => fun s -> r s s
+  | put s' r => fun s -> r () s'
+  end
+
+eff ucoop = ufork : unit => bool | suspend : unit => unit
+
+val push : [state (list {unit})]({unit} -> unit)
+let push x = do put (append (do get ()) (Cons (x, Nil)))
+
+val next : [state (list {unit})](unit -> unit)
+let next () =
+  match do get () with
   | Nil -> ()
-  | Cons (hd, tl) -> f hd; iter @a f tl
+  | Cons (p, ps) -> do put ps; p! 
   end
 
-val snoc : forall a . [](list a -> a -> list a)
-let snoc l x =
-  match l with
-  | Nil -> Cons (x, Nil)
-  | Cons (hd, tl) -> Cons (hd, snoc @a tl x)
-  end
-
-eff gen [a] = yield : a => unit
-
--- Section 6 of doo bee doo bee doo
-
-eff co (e : Effect)
-  = fork : [co e, e]{unit} => unit
-  | suspend : unit => unit
-
-eff co
-  = fork : {unit} => unit
-  | suspend : unit => unit
-
-eff queue [s]
-  = enqueue : s => unit
-  | dequeue : unit => option s
-
-type zipQ s = ZipQ of list s, list s
-
-val emptyZipQ : forall s . []{zipQ s}
-let emptyZipQ! = ZipQ (Nil, Nil)
-
-val runFifo : forall [s] [x] . [](<queue s>{x} -> zipQ s -> (x * (zipQ s)))
-let runFifo c =
-  handle<queue s> c! with
-  | return x => fun q -> (x, q)
-  | dequeue () k => fun q ->
-    match q with
-    | ZipQ (Nil, back) ->
-      match rev @s back with
-      | Nil -> k None (emptyZipQ @s !)
-      | Cons (x, front) -> k (Some (x)) (ZipQ (front, Nil))
-      end
-    | ZipQ (Cons (x, front), back) ->
-      k (Some (x)) (ZipQ (front, back))
-    end
-  | enqueue x k => fun q ->
-    match q with
-    | ZipQ (front, back) -> k () (ZipQ (front, Cons (x, back)))
-    end
-  end
-
-type proc (e : Effect) = Proc of [queue (proc e), e]{unit}
-
-val enqProc : forall (e : Effect) . [queue (proc e)]([queue (proc e), e]{unit} -> unit)
-let enqProc p = do enqueue (Proc (p))
-
-val wakeProc : forall (e : Effect) . [queue (proc e), e]{unit}
-let wakeProc! =
-  match do dequeue () with
-  | Some (Proc (x)) -> x!
-  | None -> ()
-  end
-
-val runBFShallow : forall (e : Effect) . [queue (proc e), e]([co e, queue (proc e), e]{unit} -> unit)
-let runBFShallow c =
-  handle<co e>[queue (proc e), e]! c! with
-  | return () => (wakeProc @e)!
-  | fork p k =>
-    enqProc @e {runBFShallow @e {mask<queue> (p!)}};
-    runBFShallow @e k
-  | suspend () k =>
-    enqProc @e {runBFShallow @e k};
-    (wakeProc @e)!
-  end
-
-val runBF : forall (e : Effect) . [queue (proc e), e]([co e, queue (proc e), e]{unit} -> unit)
-let runBF c =
-  handle<co e>[queue (proc e), e] c! with
-  | return () => (wakeProc @e)!
-  | fork p k =>
-    enqProc @e {runBF @e {mask<queue> (p!)}};
-    k!
-  | suspend () k =>
-    enqProc @e k;
-    (wakeProc @e)!
-  end
-
-type proc2 (e : Effect) = Proc2 of [e](list (proc2 e) -> unit)
-
-val runList : forall (e : Effect) . [e]([co e, e]{unit} -> [e](list (proc2 e) -> unit))
-let runList c =
-  handle<co e>[e] c! with
-  | return () =>
-    fun l ->
-    match l with
-    | Nil -> ()
-    | Cons (Proc2 (f), tl) -> f tl
-    end
-  | fork p k => fun l -> k () (snoc @(proc2 e) l (Proc2 (runList @e p)))
-  | suspend () k =>
-    fun l ->
-    match snoc @(proc2 e) l (Proc2 (k ())) with
-    | Nil -> ()
-    | Cons (Proc2 (f), tl) -> f tl
-    end
-  end
-
--- val test : [](int -> [[queue int]co, queue int]{unit})
-
--- <x : co, y as a, e|x as a, e>
-
--- val test : [](int -> [x: co [queue int], q: queue int]{unit})
--- let test n =
---   if n = 0 then
---     fun () -> q#enqueue 1;
---     ()
---   else
---     {print (string_of_int n);
---      x#fork (test (n - 1));
---     print (string_of_int n);
---     x#suspend ();
---     print (string_of_int n)}
-
-val test : [](int -> [co [queue int], queue int]{unit})
-let test n =
-  if n = 0 then
-    fun () -> do enqueue 1;
-    ()
-  else
-    {print (string_of_int n);
-     do fork (test (n - 1));
-     print (string_of_int n);
-     do suspend ();
-     print (string_of_int n)}
-
-
-val main : [](unit -> unit)
-let main () =
-  print "runBFShallow";
-  handle<queue int> runFifo @(proc [queue int]) @unit {runBFShallow @[queue int] {mask<queue> ((test 3)!)}} (emptyZipQ @(proc [queue int])!) with
-  | return v => ()
-  | dequeue x k => k None
-  | enqueue x k => print ("enqueue: " ^ string_of_int x); k!
-  end;
-  print "runBF";
-  handle<queue int> runFifo @(proc [queue int]) @unit {runBF @[queue int] {mask<queue> ((test 3)!)}} (emptyZipQ @(proc [queue int])!) with
-  | return v => ()
-  | dequeue x k => k None
-  | enqueue x k => print ("enqueue: " ^ string_of_int x); k!
-  end;
-  print "runList";
-  handle<queue int> runList @[queue int] (test 3) Nil with
-  | return v => ()
-  | dequeue x k => k None
-  | enqueue x k => print ("enqueue: " ^ string_of_int x); k!
+val schedule : [state (list {unit})](<ucoop>{unit} -> unit)
+let schedule m =
+  handle m! with
+  | return _ => next!
+  | suspend _ k => push k; next!
+  | ufork _ k => push {k False}; k True
   end

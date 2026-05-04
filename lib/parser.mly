@@ -162,11 +162,11 @@ let atom_expr :=
    | MASK; LANGLE; ~ = separated_list(COMMA, string_loc); RANGLE; ~ = atom_expr;
      <SMask>
    | UNIT; { SCons ("Unit", []) }
-   | HANDLE; d = midrule (LANGLE; ~ = separated_list (COMMA, seff); RANGLE; <>)?; (* mu = smod*; *)
+   | HANDLE; d = midrule (LANGLE; ~ = separated_list (COMMA, seff); RANGLE; <>)?;
      m = sexpr; WITH;
      PIPE; RETURN; p = untyped_arg; DARROW; n = sexpr;
      h = handle_clause*;
-     END; { SHand (m, d, [], (h, (p, n))) }
+     END; { SHand (m, d, (h, (p, n))) }
    | MATCH; ~ = sexpr; WITH; ~ = match_clause*; END; <SMatch>)
 
 let single_cons := loc_expr (| c = MIDENT; { SCons (c, []) })
@@ -227,9 +227,14 @@ eff:
   | x = IDENT DCOL tin = stype DARROW tout = stype { x, (tin, tout) }
 ;
 
+acc:
+  | { false }
+  | BANG { true }
+;
+
 decl_eff:
-  | EFF x = IDENT args = targ* EQU l = separated_list(PIPE, eff)
-    { x, SDEff (args, l) }
+  | EFF ho = acc x = IDENT args = targ* EQU l = separated_list(PIPE, eff)
+    { x, SDEff (ho, args, l) }
 ;
 
 decl_sig:

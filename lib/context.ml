@@ -11,7 +11,7 @@ type 'a ctx_binding
   | BMFlex of tvar * pure_type option * kind
   | BPFlex of tvar * pure_type * kind
 type eff =
-  { eargs : kind list ; eops : (pure_type, op list) Bindlib.mbinder }
+  { eargs : kind list ; eops : (pure_type, op list) Bindlib.mbinder ; eho : bool }
 
 type adt =
   { targs : kind list ; cons : (string * (pure_type, pure_type list) Bindlib.mbinder) list }
@@ -165,11 +165,11 @@ let lookup_eff e ctx =
   List.assoc_opt e ctx.effects, ctx
 
 let lookup_op op ctx =
-  List.find_map (fun (e, { eargs; eops }) ->
+  List.find_map (fun (e, ({ eops; _ } as eff)) ->
       let v, l = Bindlib.unmbind eops in
       List.find_map (fun { op_name; op_in; op_out } ->
           if op_name = op then
-            Some (e, eargs,
+            Some (e, eff,
                   Bindlib.(bind_mvar v
                              (op_ op_name (box_type op_in) (box_type op_out))
                            |> unbox))
@@ -183,6 +183,24 @@ let lookup_con con ctx =
             Some (c, targs, l)
           else None) cons
     ) ctx.data, ctx
+
+let lookup_op_in_ectx op e ctx =
+  let rec find_map_split f = function
+    | [] -> None
+    | hd :: tl ->
+      match f hd with
+      | None ->
+        find_map_split f tl |>
+        Option.map (fun (l, x, l') -> hd :: l, x, l')
+      | Some x -> Some ([], x, tl)
+  in
+  let is_op_in_eff ({ eff_name; eff_args; _ } as eff) =
+    let { eops; _ } = List.assoc eff_name ctx.effects in
+    let eops = Bindlib.msubst eops eff_args in
+    List.find_opt (fun { op_name; _ } -> op_name = op) eops
+    |> Option.map (fun op -> op, eff)
+  in
+  find_map_split is_op_in_eff e, ctx
 
 let add_binding b = fun ctx ->
   (), ctx <: b

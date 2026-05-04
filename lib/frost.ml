@@ -89,9 +89,9 @@ let guess_mono =
       l, TMod (MRel (mask, d), a)
   and aux_array l = Array.fold_left_map aux l
   and aux_eff_ext l =
-    List.fold_left_map (fun l { eff_name ; eff_args } ->
+    List.fold_left_map (fun l { eff_name; eff_args; eff_ho } ->
         let l, eff_args = aux_array l eff_args in
-        l, { eff_name ; eff_args }) l
+        l, { eff_name ; eff_args; eff_ho }) l
   in
   aux
 
@@ -241,14 +241,14 @@ and join_sk_array a a' theta =
 and join_sk_mod mu nu theta =
   let join_sk_eff_ext d d' theta =
     Option.bind
-    (List.fold_right (fun { eff_name; eff_args } o -> match o with
+    (List.fold_right (fun { eff_name; eff_args; eff_ho } o -> match o with
           | None -> None
           | Some (d, d', theta) ->
-            match Effects.find_label_eff eff_name d' with
+            match Effects.find_label_eff eff_name d' eff_ho with
             | None -> None
             | Some ({ eff_args = eff_args'; _ }, d') ->
               let eff_args, theta = join_sk_array eff_args eff_args' theta in
-              Some ({ eff_name; eff_args } :: d, d', theta))
+              Some ({ eff_name; eff_args; eff_ho } :: d, d', theta))
        d (Some ([], d', theta)))
     (fun (d, d', theta) ->
        if d' = [] then
@@ -472,12 +472,13 @@ and prejoin_mod mu nu =
   let rec prejoin_eff_ext d d' = match d with
     | [] ->
       if d' = [] then Some [] else None
-    | { eff_name; eff_args } :: d ->
-      match Effects.find_label_eff eff_name d' with
+    | { eff_name; eff_args; eff_ho } :: d ->
+      match Effects.find_label_eff eff_name d' eff_ho with
       | None -> None
       | Some ({ eff_args = eff_args'; _ }, d') ->
         let eff_args = Array.map2 prejoin eff_args eff_args' in
-        Option.map (List.cons { eff_name; eff_args }) (prejoin_eff_ext d d')
+        Option.map (List.cons { eff_name; eff_args; eff_ho })
+          (prejoin_eff_ext d d')
   in
   let prejoin_eff_ctx (d, eps) (d', eps') =
     match prejoin_eff_ext d d' with
@@ -559,8 +560,8 @@ let end_rule x = fun ctx ->
 let rec sub_eff d d' =
   match d with
   | [] -> return true
-  | { eff_args; eff_name } :: tl ->
-    match Effects.find_label_eff eff_name d' with
+  | { eff_args; eff_name; eff_ho } :: tl ->
+    match Effects.find_label_eff eff_name d' eff_ho with
     | None -> return false
     | Some ({ eff_args = eff_args'; _ }, d') ->
       let* _ = M.Array.map2 (=~) eff_args eff_args' in
@@ -589,8 +590,8 @@ let sub_mod mu nu f = match mu, nu with
 
 let rec join_eff_ext d d' = match d with
   | [] -> return (Some d')
-  | { eff_name; eff_args } as hd :: d ->
-    match Effects.find_label_eff eff_name d' with
+  | { eff_name; eff_args; eff_ho } as hd :: d ->
+    match Effects.find_label_eff eff_name d' eff_ho with
     | None ->
       join_eff_ext d d' >>= begin function
         | None -> return None
@@ -615,8 +616,8 @@ let join_eff_ctx (d, eps) (d', eps') =
 
 let rec meet_eff e e' = match e with
   | [] -> return (Some [])
-  | { eff_name; eff_args } as hd :: e ->
-    match Effects.find_label_eff eff_name e' with
+  | { eff_name; eff_args; eff_ho } as hd :: e ->
+    match Effects.find_label_eff eff_name e' eff_ho with
     | None -> meet_eff e e'
     | Some ({ eff_args = eff_args'; _ }, e') ->
       let* _ = M.Array.map2 (=~) eff_args eff_args' in
@@ -907,17 +908,6 @@ let rec sk_infer m { sexpr; loc } e = match m, sexpr with
       | Some v ->
         let* _, q, _ = get_type_context v in
         sub loc m Sk q e >>= end_rule
-        
-        (*
-        let* _, q, gamma' = get_type_context v in
-        (* NEW *)
-        let nu, f = locks e gamma' in
-        let* q = across q nu f in
-        match q with
-        | None -> Errors.no_access loc x v e
-        | Some q ->
-          sub loc m Sk q e >>= end_rule
-        (* END NEW *) *) 
     end
 
   (* PI-Anno *)
@@ -998,26 +988,27 @@ let rec sk_infer m { sexpr; loc } e = match m, sexpr with
     we might be under a universal ghost, who could introduce the effect we are
     looking for. We stay conservative for now *)
     rule "PI-Do" >>
-    let* _, args, bop = lookup_op op >>= function
+    let* _, { eargs; _ }, bop = lookup_op op >>= function
       | None -> Errors.unknown_eff loc op
       | Some p -> return p
     in
     let { op_out; _ } = Bindlib.msubst bop
-        (Array.make (List.length args) Ghost) in
+        (Array.make (List.length eargs) Ghost) in
     sub loc mode Sk op_out e >>= 
     end_rule
 
   (* PI-Handle *)
-  | mode, SHand (m, _, _, (h, (x, n))) ->
+  | mode, SHand (m, _, (h, (x, n))) ->
     rule "PI-Handle" >>
-    let* eff_name, args, _ = lookup_op (fst (List.hd h)) >>= function
+    let* eff_name, { eargs; eho; _ }, _ =
+      lookup_op (fst (List.hd h)) >>= function
       | Some x -> return x
       | None ->
         let (op, (loc, _, _, _)) = List.hd h in
         Errors.unknown_eff loc op
     in
     let* p = sk_infer (Infer Ghost) m e in
-    let d = [{ eff_name; eff_args = Array.make (List.length args) Ghost }] in
+    let d = [{ eff_name; eff_args = Array.make (List.length eargs) Ghost; eff_ho = eho }] in
     let* ops = Type.unfold_ext d in
     let* p = protect_context @@
       let* _ = fresh_var x (TMod (MRel ([], d), p)) in
@@ -1185,19 +1176,22 @@ let rec finfer m { sexpr; loc } e = match m, sexpr with
   (* I-Do *)
   | mode, SDo (op, m) ->
     rule "I-Do" >>
-    let* ops = Type.unfold_ext (fst e) in
-    let a, b = match Effects.get_op op ops with
-      | None -> Errors.unknown_eff loc op
-      | Some p -> p
+    let* a, b = lookup_op_in_ectx op (fst e) >>= function
+    | None -> Errors.unknown_eff loc op
+    | Some (l, ({ op_in; op_out; _ }, { eff_ho; _ }), _) ->
+      (if eff_ho && l <> [] then
+         Errors.higher_order_effect_not_first loc op e
+      else return ()) >>
+      return (op_in, op_out)
     in
     let* _, m = finfer (Check a) m e in
     let* b = sub loc mode Ty b e in
     end_rule (b, Do (op, m))
 
   (* I-Handle *)
-  | mode, SHand (m, None, _, (h, (x, n))) ->
+  | mode, SHand (m, None, (h, (x, n))) ->
     rule "I-Handle" >>
-    let* eff_name, eargs, _ = lookup_op (fst (List.hd h)) >>= function
+    let* eff_name, { eargs; eho; _} , _ = lookup_op (fst (List.hd h)) >>= function
       | Some x -> return x
       | None ->
         let (op, (loc, _, _, _)) = List.hd h in
@@ -1205,7 +1199,7 @@ let rec finfer m { sexpr; loc } e = match m, sexpr with
     in
     let* vars = fresh_mflexs eargs in
     let eff_args = Array.map (fun a -> MFlex a) vars in
-    let d = [{ eff_name; eff_args }] in
+    let d = [{ eff_name; eff_args; eff_ho = eho }] in
     let nu = MRel ([], d) in
     let* a, m = with_binding (Lock (nu, e)) @@
       finfer (Infer Ghost) m (Effects.extend d e) in
@@ -1216,13 +1210,14 @@ let rec finfer m { sexpr; loc } e = match m, sexpr with
       return (b, n)
     in
     let* ops = Type.unfold_ext d in
+    let homod = if eho then fun a -> TMod (nu, a) else fun a -> a in
     let check_clause (li, (loc, pi, ri, ni)) =
       match Effects.get_op li ops with
       | None -> Errors.unknown_eff loc li
       | Some (ai, bi) ->
         protect_context @@
-        let* pi = fresh_var pi ai in
-        let* ri = fresh_var ri (TArr (bi, b)) in
+        let* pi = fresh_var pi (homod ai) in
+        let* ri = fresh_var ri (TArr (homod bi, b)) in
         let* bi, ni = finfer mode ni e in
         return (bi, (li, Bindlib.(box_expr ni |> bind_var ri |> bind_var pi
                              |> unbox)))

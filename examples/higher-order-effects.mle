@@ -19,7 +19,7 @@ let state m =
   | put s' r => fun s -> r () s'
   end
 
-eff ucoop = ufork : unit => bool | suspend : unit => unit
+eff ucoop = ufork : unit => bool | ususpend : unit => unit
 
 val push : [state (list {unit})]({unit} -> unit)
 let push x = do put (append (do get ()) (Cons (x, Nil)))
@@ -35,6 +35,22 @@ val schedule : [state (list {unit})](<ucoop>{unit} -> unit)
 let schedule m =
   handle m! with
   | return _ => next!
-  | suspend _ k => push k; next!
+  | ususpend _ k => push k; next!
   | ufork _ k => push {k False}; k True
   end
+
+val full_schedule : [](<ucoop>{unit} -> unit)
+let full_schedule m = state {schedule { mask<state> (m!) }} Nil
+
+eff! coop = fork : {unit} => unit | suspend : unit => unit
+
+val schedule' : [state (list {unit})](<coop>{unit} -> unit)
+let schedule' m =
+  handle m! with
+  | return _ => next!
+  | suspend _ k => push k; next!
+  | fork p k => push k; schedule' p
+  end
+
+val full_schedule' : [](<coop>{unit} -> unit)
+let full_schedule' m = state {schedule' { mask<state> (m!) }} Nil

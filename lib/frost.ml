@@ -1069,6 +1069,11 @@ let rec sk_infer m { sexpr; loc } e = match m, sexpr with
   | mode, SSeq (m, n) ->
     sk_infer mode (let_of_seq loc m n) e
 
+  (* PI-Mask *)
+  | mode, SMask (_, m) ->
+    rule "PI-Mask" >>
+    sk_infer mode m e
+
   (* END NEW *) 
 
   | _, _ -> Errors.cannot_infer_expr loc
@@ -1210,14 +1215,19 @@ let rec finfer m { sexpr; loc } e = match m, sexpr with
       return (b, n)
     in
     let* ops = Type.unfold_ext d in
-    let homod = if eho then fun a -> TMod (nu, a) else fun a -> a in
+    let homod = if eho then fun a ->
+        is_abs a >>= function
+        | true -> return a
+        | false -> return (TMod (nu, a))
+      else fun a -> return a in
     let check_clause (li, (loc, pi, ri, ni)) =
       match Effects.get_op li ops with
       | None -> Errors.unknown_eff loc li
       | Some (ai, bi) ->
         protect_context @@
-        let* pi = fresh_var pi (homod ai) in
-        let* ri = fresh_var ri (TArr (homod bi, b)) in
+        let* pi = homod ai >>= fresh_var pi in
+        let* bi = homod bi in
+        let* ri = fresh_var ri (TArr (bi, b)) in
         let* bi, ni = finfer mode ni e in
         return (bi, (li, Bindlib.(box_expr ni |> bind_var ri |> bind_var pi
                              |> unbox)))
@@ -1259,6 +1269,33 @@ let rec finfer m { sexpr; loc } e = match m, sexpr with
     end_rule (b, Let (m, a, Bindlib.(box_expr n |> bind_var v |> unbox)))
   | mode, SSeq (m, n) ->
     finfer mode (let_of_seq loc m n) e
+
+  (* I-MaskInfer *)
+  | Infer _ as mode, SMask (l, m) -> 
+    rule "I-MaskInfer" >>
+    let* l = Type.check_mask l in
+    let* a, m =
+      with_binding (Lock (MRel (l, []), e)) @@
+      finfer mode m (Effects.remove_labels e l)
+    in
+    end_rule (TMod (MRel (l, []), a), Mask (l, m))
+
+  (* I-MaskCheck *)
+  | Check (TMod (MRel (l', []), a) as a'), SMask (l, m)
+    when Effects.eq_mask (List.split l |> fst) l' ->
+    rule "I-MaskCheck" >>
+    let* _, m =
+      with_binding (Lock (MRel (l', []), e)) @@
+      finfer (Check a) m (Effects.remove_labels e l')
+    in
+    end_rule (a', Mask (l', m))
+
+  (* I-MaskSwitch *)
+  | mode, (SMask _ as sexpr) ->
+    rule "I-MaskSwitch" >>
+    let* a, m = finfer (Infer Ghost) { sexpr; loc } e in
+    let* a = sub loc mode Ty a e in
+    end_rule (a, m)
 
   (* END NEW *)
 

@@ -275,7 +275,8 @@ and join_sk_mod mu nu theta =
 
 and join_var alpha beta theta = match alpha, theta with
   (* U-Flex-Flex-Id *)
-  | MFlex alpha, theta when Bindlib.eq_vars alpha beta ->
+  | MFlex alpha, theta when Bindlib.eq_vars alpha beta
+                         && is_in_dom_ alpha theta ->
     rule "U-Flex-Flex-Id"; end_rule ();
     theta
 
@@ -684,13 +685,9 @@ let rec broom loc m n s e =
     let mu, a = get_guarded a' in
     let nu, s = get_guarded s' in
     let* s = broom loc (Check a) Ty s (Effects.apply_mod mu e) in
-      unless (is_abs s ||| sub_mod nu mu e)
-        (fun () -> Errors.mod_mismatch loc ~expected:mu ~got:nu e) >>
-    let rec get_mod_list a b = match a with
-      | TMod (mu, a) -> TMod (mu, get_mod_list a b)
-      | _ -> b
-    in
-    end_rule (get_mod_list a' s)
+    unless (is_abs s ||| sub_mod nu mu e)
+      (fun () -> Errors.mod_mismatch loc ~expected:mu ~got:nu e) >>
+    end_rule a'
   | Check a, Ty, (TMod _ as s) ->
     broom loc (Check (TMod (Effects.id, a))) Ty s e >>= begin function
       | TMod (MRel ([], []), a) -> return a
@@ -1272,7 +1269,6 @@ let rec finfer m { sexpr; loc } e = match m, sexpr with
 
   (* I-MaskInfer *)
   | Infer _ as mode, SMask (l, m) -> 
-    rule "I-MaskInfer" >>
     let* l = Type.check_mask l in
     let* a, m =
       with_binding (Lock (MRel (l, []), e)) @@

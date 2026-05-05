@@ -244,7 +244,7 @@ let get_suffix f = fun ctx ->
 let with_binding b f =
   protect_context @@ (add_binding b >> f)
 
-let get_var_kind x ({gamma; _} as ctx) =
+let get_var_kind x ({ gamma; _ } as ctx) =
   let rec get_var_kind = function
   | [] -> failwith "get_var_kind: internal error"
   | BPFlex (y, _, k) :: _
@@ -258,7 +258,7 @@ let rec get_pflex_def_ x = function
   | BPFlex (y, p, _) :: _ when Bindlib.eq_vars x y -> p
   | _ :: tl -> get_pflex_def_ x tl
 
-let get_pflex_def x ({gamma; _} as ctx) =
+let get_pflex_def x ({ gamma; _ } as ctx) =
   get_pflex_def_ x gamma, ctx
 
 let rec get_pflex_split_ x = function
@@ -268,8 +268,15 @@ let rec get_pflex_split_ x = function
     let g, p, g' = get_pflex_split_ x tl in
     hd :: g, p, g'
 
-let get_pflex_split x ({gamma; _} as ctx) =
+let get_pflex_split x ({ gamma; _ } as ctx) =
   get_pflex_split_ x gamma, ctx
+
+let rec is_in_dom_ alpha = function
+  | [] -> false
+  | BPFlex (beta, _, _) :: _
+  | BMFlex (beta, _, _) :: _
+  | BType (beta, _) :: _ when Bindlib.eq_vars alpha beta -> true
+  | _ :: tl -> is_in_dom_ alpha tl
 
 (* Section 4.4 *)
 

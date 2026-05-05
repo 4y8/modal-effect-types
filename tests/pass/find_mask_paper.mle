@@ -1,0 +1,20 @@
+type bool = True | False
+type list a = Nil | Cons of a, list a
+type option a = None | Some of a
+type unit = Unit
+
+val iter : forall a . []((a -> unit) -> list a -> unit)
+let iter f l =
+  match l with
+  | Nil -> ()
+  | Cons (hd, tl) ->
+    f hd; iter f tl
+  end
+
+eff gen [a] = yield : a => unit
+
+let find p xs =
+  handle (iter (fun x -> if mask<gen> (p x) then do yield x else ()) xs) with
+  | return _ => None
+  | yield x k => Some (x)
+  end

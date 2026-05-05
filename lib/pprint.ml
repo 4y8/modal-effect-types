@@ -1,4 +1,5 @@
 open Syntax
+open Context
 open Format
 
 let kind fmt = function
@@ -76,3 +77,18 @@ let mu fmt mu = modality (Bindlib.free_vars (box_mod mu)) fmt mu
 let ectx fmt ectx = eff_ctx (Bindlib.free_vars (box_effect_ctx ectx)) fmt ectx
 
 let eext fmt eext = eff_ext (Bindlib.free_vars (box_effect_ext eext)) fmt eext
+
+let bind fmt = function
+  | BVar (v, a) -> fprintf fmt "%s : %a" (Bindlib.name_of v) ty a
+  | BType (v, k) -> fprintf fmt "%s : %a" (Bindlib.name_of v) kind k
+  | Marker -> fprintf fmt ";"
+  | BMFlex (v, None, k) -> fprintf fmt "^%s : %a" (Bindlib.name_of v) kind k
+  | BMFlex (v, Some a, k) ->
+    fprintf fmt "^%s : %a = %a" (Bindlib.name_of v) kind k ty a
+  | Lock (nu, _) ->
+    fprintf fmt "🔒 %a" mu nu
+  | BPFlex (v, a, k) ->
+    fprintf fmt "ˇ%s : %a = %a" (Bindlib.name_of v) kind k ty a
+
+let context fmt gamma =
+  pp_print_list ~pp_sep:(fun fmt () -> fprintf fmt ",@ ") bind fmt gamma

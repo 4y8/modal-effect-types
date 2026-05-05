@@ -273,7 +273,8 @@ and join_sk_mod mu nu theta =
   | _, _ -> None
 (* END NEW *)
 
-and join_var alpha beta theta = match alpha, theta with
+and join_var alpha beta theta =
+  match alpha, theta with
   (* U-Flex-Flex-Id *)
   | MFlex alpha, theta when Bindlib.eq_vars alpha beta
                          && is_in_dom_ alpha theta ->
@@ -329,7 +330,8 @@ and join_var alpha beta theta = match alpha, theta with
   | _, [] ->
     raise (UnifyError (alpha, MFlex beta))
 
-and assign alpha s xi theta = match alpha, theta with
+and assign alpha s xi theta =
+  match alpha, theta with
   (* U-Assign-SolveM *)
   | MFlex a, BMFlex (a', None, k) :: theta when Bindlib.eq_vars a a' ->
     rule "U-Assign-SolveM";
@@ -351,14 +353,14 @@ and assign alpha s xi theta = match alpha, theta with
   (* U-Assign-AssignMono *)
   | MFlex _, (BMFlex (b, Some tau, _) as hd) :: theta ->
     rule "U-Assign-AssignMono";
-    let _, theta = join_sk (subst_var s tau b) (subst_var alpha tau b) theta in
+    let _, theta = join_sk (subst_var s tau b) (subst_var alpha tau b) (xi @ theta) in
     end_rule ();
     hd :: theta
 
   (* U-Assign-AssignMono' *)
   | PFlex _, (BMFlex (b, Some tau, _) as hd) :: theta ->
     rule "U-Assign-AssignMono'";
-    let _, theta = join_sk alpha (subst_var s tau b) theta in
+    let _, theta = join_sk alpha (subst_var s tau b) (xi @ theta) in
     end_rule ();
     hd :: theta
 

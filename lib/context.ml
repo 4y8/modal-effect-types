@@ -10,6 +10,7 @@ type 'a ctx_binding
 
   | BMFlex of tvar * pure_type option * kind
   | BPFlex of tvar * pure_type * kind
+
 type eff =
   { eargs : kind list ; eops : (pure_type, op list) Bindlib.mbinder ; eho : bool }
 

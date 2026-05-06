@@ -19,7 +19,7 @@ let find_label_eff lab d eff_ho =
     | _ -> None
   else
     get_first (fun { eff_name; _ } -> eff_name = lab)
-      ~skippable:(fun { eff_ho; _ } -> eff_ho) d
+      ~skippable:(fun { eff_ho; _ } -> not eff_ho) d
 
 let rec remove_labels_ext d l = match d with
   | [] -> ([], l)

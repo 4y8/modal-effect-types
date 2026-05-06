@@ -572,7 +572,8 @@ let rec sub_eff d d' =
   | [] -> return true
   | { eff_args; eff_name; eff_ho } :: tl ->
     match Effects.find_label_eff eff_name d' eff_ho with
-    | None -> return false
+    | None ->
+      return false
     | Some ({ eff_args = eff_args'; _ }, d') ->
       let* _ = M.Array.map2 (=~) eff_args eff_args' in
       sub_eff tl d'
@@ -586,7 +587,8 @@ let sub_eff_ctx (d, eps) (d', eps') =
   | Some eps, Some eps' -> sub_eff d' d &&& (return @@ Effects.eq_eff_var eps eps')
   | _, _ -> return false
 
-let sub_mod mu nu f = match mu, nu with
+let sub_mod mu nu f =
+  match mu, nu with
   | MAbs e, _ ->
     sub_eff_ctx e (Effects.apply_mod nu f)
   | MRel (l1, d1), MRel (l2, d2) ->

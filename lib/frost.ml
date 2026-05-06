@@ -855,6 +855,18 @@ let rec split_fun_check loc a e = match a with
   | TArr (a, b) -> return (a, b, e)
   | a -> Errors.function_non_arr loc a
 
+let rec split_con_check a e = match a with
+  (* NEW *)
+  | TMod (mu, a) ->
+    add_binding (Lock (mu, e)) >>
+    split_con_check a Effects.(apply_mod mu e)
+  (* END NEW *)
+  | TForA (k, a) ->
+    let v, a = Bindlib.unbind a in
+    add_binding (BType (v, k)) >>
+    split_con_check a e
+  | a -> return (a, e)
+
 let app_of_con loc c l =
   List.fold_left (fun m n -> { sexpr = SApp (m, n) ; loc = m.loc })
     { sexpr = SVar c; loc = loc } l
@@ -1218,7 +1230,7 @@ let rec finfer m { sexpr; loc } e = match m, sexpr with
     let* b, n = protect_context @@
       let* ret = fresh_var x (TMod (nu, a)) in
       let* b, n = finfer mode n e in
-      let n = Bindlib.(n|> box_expr |> bind_var ret |> unbox) in
+      let n = Bindlib.(n |> box_expr |> bind_var ret |> unbox) in
       return (b, n)
     in
     let* ops = Type.unfold_ext d in
@@ -1244,6 +1256,11 @@ let rec finfer m { sexpr; loc } e = match m, sexpr with
     end_rule (b, Hand (m, ops, n, h))
 
   (* I-Con *)
+  | Check a, (SCons (c, l) as m) when Type.is_val m ->
+    rule "I-ConCheck" >>
+    (protect_context @@ let* a, e = split_con_check a e in
+     (finfer (Check a) (app_of_con loc c l) e >>= end_rule))
+
   | mode, SCons (c, l) ->
     rule "I-Con" >>
     finfer mode (app_of_con loc c l) e >>=

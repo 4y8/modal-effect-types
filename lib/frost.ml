@@ -104,7 +104,7 @@ let rule s =
 let end_rule () =
   decr level
 
-let rec join_sk s p theta =
+let rec join_sk s p theta ctx =
   match s, p with
   (* U-GhostL *)
   | Ghost, p ->
@@ -119,7 +119,7 @@ let rec join_sk s p theta =
   (* U-Unit (generalised) *)
   | TCon (c, a), TCon (c', a') when c = c' ->
     rule "U-Con";
-    let a, theta = join_sk_array a a' theta in
+    let a, theta = join_sk_array a a' theta ctx in
     end_rule ();
     TCon (c, a), theta
 
@@ -131,29 +131,29 @@ let rec join_sk s p theta =
   (* U-Flex *)
   | (PFlex _ | MFlex _) as alpha, MFlex beta ->
     rule "U-Flex";
-    let theta = join_var alpha beta theta in
+    let theta = join_var alpha beta theta ctx in
     end_rule ();
     alpha, theta
 
   (* U-FlexR *)
   | s, (MFlex _ as alpha) ->
     rule "U-FlexR";
-    let theta = assign alpha s [] theta in
+    let theta = assign alpha s [] theta ctx in
     end_rule ();
     alpha, theta
 
   (* U-FlexL *)
   | (PFlex _ | MFlex _) as alpha, p ->
     rule "U-FlexL";
-    let theta = assign alpha p [] theta in
+    let theta = assign alpha p [] theta ctx in
     end_rule ();
     alpha, theta
 
   (* U-Arrow *)
   | TArr (s1, s2), TArr (p1, p2) ->
     rule "U-Arrow";
-    let s1', theta = join_sk s1 p1 theta in
-    let s2', theta = join_sk s2 p2 theta in
+    let s1', theta = join_sk s1 p1 theta ctx in
+    let s2', theta = join_sk s2 p2 theta ctx in
     end_rule ();
     TArr (s1', s2'), theta
 
@@ -161,14 +161,14 @@ let rec join_sk s p theta =
   | TForA (k, s), TForA (k', p) when k = k' ->
     rule "U-Forall";
     let alpha, s, p = Bindlib.unbind2 s p in
-    let s', theta = join_sk s p (BType (alpha, k) :: theta) in
+    let s', theta = join_sk s p (BType (alpha, k) :: theta) ctx in
     end_rule ();
     Bindlib.(bind_var alpha (box_type s') |> tfora_ k |> unbox), theta
 
   (* U-UnivGhost *)
   | UGhost s, UGhost p ->
     rule "U-UnivGhost";
-    let s', theta = join_sk s p theta in
+    let s', theta = join_sk s p theta ctx in
     end_rule ();
     UGhost s', theta
 
@@ -176,7 +176,7 @@ let rec join_sk s p theta =
   | TForA (k, s), (UGhost _ as p) ->
     rule "U-Forall-UnivGhost";
     let alpha, s = Bindlib.unbind s in
-    let s', theta = join_sk s p (BType (alpha, k) :: theta) in
+    let s', theta = join_sk s p (BType (alpha, k) :: theta) ctx in
     end_rule ();
     Bindlib.(bind_var alpha (box_type s') |> tfora_ k |> unbox), theta
 
@@ -184,7 +184,7 @@ let rec join_sk s p theta =
   | (UGhost _ as s), TForA (k, p) ->
     rule "U-UnivGhost-Forall";
     let alpha, p = Bindlib.unbind p in
-    let s', theta = join_sk s p (BType (alpha, k) :: theta) in
+    let s', theta = join_sk s p (BType (alpha, k) :: theta) ctx in
     end_rule ();
     Bindlib.(bind_var alpha (box_type s') |> tfora_ k |> unbox), theta
 
@@ -192,25 +192,25 @@ let rec join_sk s p theta =
   (* U-Mod *)
   | TMod (mu, s), TMod (nu, p) ->
     rule "U-Mod";
-    let mu', theta = match join_sk_mod mu nu theta with
+    let mu', theta = match join_sk_mod mu nu theta ctx with
     | None -> raise (UnifyError (TMod (mu, s), TMod (nu, p)))
     | Some x -> x
     in
-    let s', theta = join_sk s p theta in
+    let s', theta = join_sk s p theta ctx in
     end_rule ();
     TMod (mu', s'), theta
 
   (* U-Mod-UnivGhost *)
   | TMod (mu, s), (UGhost _ as p) ->
     rule "U-Mod-UnivGhost";
-    let s', theta = join_sk s p theta in
+    let s', theta = join_sk s p theta ctx in
     end_rule ();
     TMod (mu, s'), theta
     
   (* U-UnivGhost-Mod *)
   | (UGhost _ as s), TMod (mu, p) -> 
     rule "U-UnivGhost-Mod";
-    let s', theta = join_sk s p theta in
+    let s', theta = join_sk s p theta ctx in
     end_rule ();
     TMod (mu, s'), theta
   (* END NEW *) 
@@ -218,27 +218,28 @@ let rec join_sk s p theta =
   (* U-Guarded-UnivGhost *)
   | s, UGhost p when is_guarded s theta && not (is_flex_var s) ->
     rule "U-Guarded-UnivGhost";
-    let theta = join_sk s p theta in
+    let theta = join_sk s p theta ctx in
     end_rule ();
     theta
 
   (* U-UnivGhost-Guarded *)
   | UGhost s, p when is_guarded p theta && not (is_flex_var p) ->
-    rule "U-UnivGhost-Guarded";let theta = join_sk s p theta in
+    rule "U-UnivGhost-Guarded";
+    let theta = join_sk s p theta ctx in
     end_rule ();
     theta
 
   | _ ->
     raise (UnifyError (s, p))
 
-and join_sk_array a a' theta =
+and join_sk_array a a' theta ctx =
   let l, theta = Array.fold_right (fun (s, p) (a, theta) ->
-      let s', theta = join_sk s p theta in
+      let s', theta = join_sk s p theta ctx in
       (s' :: a), theta) (Array.combine a a') ([], theta)
   in Array.of_list l, theta
 
 (* NEW *)
-and join_sk_mod mu nu theta =
+and join_sk_mod mu nu theta ctx =
   let join_sk_eff_ext d d' theta =
     Option.bind
     (List.fold_right (fun { eff_name; eff_args; eff_ho } o -> match o with
@@ -247,7 +248,8 @@ and join_sk_mod mu nu theta =
             match Effects.find_label_eff eff_name d' eff_ho with
             | None -> None
             | Some ({ eff_args = eff_args'; _ }, d') ->
-              let eff_args, theta = join_sk_array eff_args eff_args' theta in
+              let eff_args, theta =
+                join_sk_array eff_args eff_args' theta ctx in
               Some ({ eff_name; eff_args; eff_ho } :: d, d', theta))
        d (Some ([], d', theta)))
     (fun (d, d', theta) ->
@@ -273,7 +275,7 @@ and join_sk_mod mu nu theta =
   | _, _ -> None
 (* END NEW *)
 
-and join_var alpha beta theta =
+and join_var alpha beta theta ctx =
   match alpha, theta with
   (* U-Flex-Flex-Id *)
   | MFlex alpha, theta when Bindlib.eq_vars alpha beta
@@ -295,42 +297,42 @@ and join_var alpha beta theta =
   | alpha, (BMFlex (gamma, Some tau, _) as hd) :: theta ->
     rule "U-Flex-Flex-AssignMono";
     let _, theta = join_sk (subst_var alpha tau gamma)
-        (subst_var (MFlex beta) tau gamma) theta in
+        (subst_var (MFlex beta) tau gamma) theta ctx in
     end_rule ();
     hd :: theta
 
   (* U-Flex-Flex-AssignPoly *)
   | PFlex a, BPFlex (a', p, k) :: theta when Bindlib.eq_vars a a' ->
     rule "U-Flex-Flex-AssignPoly";
-    let q, theta = join_sk p (MFlex beta) theta in
+    let q, theta = join_sk p (MFlex beta) theta ctx in
     end_rule ();
     BPFlex (a, q, k) :: theta
 
   (* U-Flex-Flex-SkipPoly *)
   | _, (BPFlex _ as hd) :: theta ->
     rule "U-Flex-Flex-SkipPoly";
-    let theta = join_var alpha beta theta in
+    let theta = join_var alpha beta theta ctx in
     end_rule ();
     hd :: theta
 
   (* U-Flex-Flex-SkipMono *)
   | _, (BMFlex _ as hd) :: theta ->
     rule "U-Flex-Flex-SkipMono";
-    let theta = join_var alpha beta theta in
+    let theta = join_var alpha beta theta ctx in
     end_rule ();
     hd :: theta
 
   (* U-Flex-Flex-Skip *)
   | _, ((BVar _ | Marker | BType _ | Lock _) as hd) :: theta ->
     rule "U-Flex-Flex-Skip";
-    let theta = join_var alpha beta theta in
+    let theta = join_var alpha beta theta ctx in
     end_rule ();
     hd :: theta
 
   | _, [] ->
     raise (UnifyError (alpha, MFlex beta))
 
-and assign alpha s xi theta =
+and assign alpha s xi theta ctx =
   match alpha, theta with
   (* U-Assign-SolveM *)
   | MFlex a, BMFlex (a', None, k) :: theta when Bindlib.eq_vars a a' ->
@@ -340,27 +342,32 @@ and assign alpha s xi theta =
     let beta, tau = guess_mono (xi @ theta) s in
     if not (is_mono tau) then
       raise (UnifyError (MFlex a, tau));
+    if k = Abs && not (is_abs tau ctx |> fst) then
+      Errors.kind_mismatch None ~expected:Abs ~got:Any tau;
     end_rule ();
     BMFlex (a', Some tau, k) :: beta
 
   (* U-Assign-SolveP *)
   | PFlex a, BPFlex (a', q, k) :: theta when Bindlib.eq_vars a a' ->
     rule "U-Assign-SolveP";
-    let p', theta = join_sk q s (xi @ theta) in
+    let p', theta = join_sk q s (xi @ theta) ctx in
+    if k = Abs && not (is_abs p' ctx |> fst) then
+      Errors.kind_mismatch None ~expected:Abs ~got:Any p';
     end_rule ();
     BPFlex (a', p', k) :: theta
 
   (* U-Assign-AssignMono *)
   | MFlex _, (BMFlex (b, Some tau, _) as hd) :: theta ->
     rule "U-Assign-AssignMono";
-    let _, theta = join_sk (subst_var s tau b) (subst_var alpha tau b) (xi @ theta) in
+    let _, theta = join_sk (subst_var s tau b) (subst_var alpha tau b)
+        (xi @ theta) ctx in
     end_rule ();
     hd :: theta
 
   (* U-Assign-AssignMono' *)
   | PFlex _, (BMFlex (b, Some tau, _) as hd) :: theta ->
     rule "U-Assign-AssignMono'";
-    let _, theta = join_sk alpha (subst_var s tau b) (xi @ theta) in
+    let _, theta = join_sk alpha (subst_var s tau b) (xi @ theta) ctx in
     end_rule ();
     hd :: theta
 
@@ -369,7 +376,7 @@ and assign alpha s xi theta =
     rule "U-Assign-AssignPoly";
     let xi', tau = guess_mono [] p in
     let xi = xi @ xi' in
-    let theta = assign alpha (subst_var s tau b) xi theta in
+    let theta = assign alpha (subst_var s tau b) xi theta ctx in
     end_rule ();
     BPFlex (b, tau, k) :: theta
 
@@ -377,7 +384,7 @@ and assign alpha s xi theta =
   | (MFlex a | PFlex a), (BPFlex (b, _, _) as hd) :: theta when
       not Bindlib.(occur b (box_type s) || eq_vars b a) ->
     rule "U-Assign-SkipPoly";
-    let theta = assign alpha s xi theta in
+    let theta = assign alpha s xi theta ctx in
     end_rule ();
     hd :: theta
 
@@ -385,7 +392,7 @@ and assign alpha s xi theta =
   | (MFlex a | PFlex a), (BMFlex (b, None, _) as hd) :: theta when
       Bindlib.(occur b (box_type s) && not (eq_vars a b)) ->
     rule "U-Assign-DependMono";
-    let theta = assign alpha s (xi @ [hd]) theta in
+    let theta = assign alpha s (xi @ [hd]) theta ctx in
     end_rule ();
     theta
 
@@ -393,7 +400,7 @@ and assign alpha s xi theta =
   | (MFlex a | PFlex a), (BMFlex (b, _, _) as hd) :: theta when
       not Bindlib.(occur b (box_type s) || eq_vars b a) ->
     rule "U-Assign-SkipMono";
-    let theta = assign alpha s xi theta in
+    let theta = assign alpha s xi theta ctx in
     end_rule ();
     hd :: theta
 
@@ -401,14 +408,14 @@ and assign alpha s xi theta =
   | alpha, (BType (b, _) as hd) :: theta when
       not Bindlib.(occur b (box_type s)) ->
     rule "U-Assign-SkipRigid";
-    let theta = assign alpha s xi theta in
+    let theta = assign alpha s xi theta ctx in
     end_rule ();
     hd :: theta
 
   (* U-Assign-SkipOthers *)
   | _, ((BVar _ | Marker | Lock _) as hd) :: theta ->
     rule "U-Assign-SkipOthers";
-    let theta = assign alpha s xi theta in
+    let theta = assign alpha s xi theta ctx in
     end_rule ();
     hd :: theta
 
@@ -423,7 +430,7 @@ type sup
   = Ty | Sk
 
 let (=~) s p ({ gamma; _ } as ctx) =
-  let s, gamma = join_sk s p gamma in
+  let s, gamma = join_sk s p gamma ctx in
   s, { ctx with gamma }
 
 

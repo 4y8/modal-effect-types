@@ -13,6 +13,7 @@ let iter f l =
 
 eff gen [a] = yield : a => unit
 
+val find : forall [a] . []((a -> bool) -> list a -> option a)
 let find p xs =
   handle (iter (fun x -> if mask<gen> (p x) then do yield x else ()) xs) with
   | return _ => None

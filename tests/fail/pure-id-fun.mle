@@ -1,0 +1,3 @@
+val id : forall [a] . [](a -> a)
+
+let f = id (fun x -> 1)

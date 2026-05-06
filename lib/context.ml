@@ -9,7 +9,7 @@ type 'a ctx_binding
   | Marker
 
   | BMFlex of tvar * pure_type option * kind
-  | BPFlex of tvar * pure_type * kind
+  | BPFlex of tvar * pure_type
 
 type eff =
   { eargs : kind list ; eops : (pure_type, op list) Bindlib.mbinder ; eho : bool }
@@ -247,7 +247,6 @@ let with_binding b f =
 
 let rec get_var_kind_ x = function
   | [] -> failwith "get_var_kind: internal error"
-  | BPFlex (y, _, k) :: _
   | BMFlex (y, _, k) :: _
   | BType (y, k) :: _ when Bindlib.eq_vars x y -> k
   | _ :: tl -> get_var_kind_ x tl
@@ -257,7 +256,7 @@ let get_var_kind x ({ gamma; _ } as ctx) =
 
 let rec get_pflex_def_ x = function
   | [] -> failwith "get_pflex_def_: internal error"
-  | BPFlex (y, p, _) :: _ when Bindlib.eq_vars x y -> p
+  | BPFlex (y, p) :: _ when Bindlib.eq_vars x y -> p
   | _ :: tl -> get_pflex_def_ x tl
 
 let get_pflex_def x ({ gamma; _ } as ctx) =
@@ -265,7 +264,7 @@ let get_pflex_def x ({ gamma; _ } as ctx) =
 
 let rec get_pflex_split_ x = function
   | [] -> failwith "get_pflex_split_: internal error"
-  | BPFlex (y, p, k) :: tl when Bindlib.eq_vars x y -> [], (p, k), tl
+  | BPFlex (y, p) :: tl when Bindlib.eq_vars x y -> [], p, tl
   | hd :: tl ->
     let g, p, g' = get_pflex_split_ x tl in
     hd :: g, p, g'
@@ -275,7 +274,7 @@ let get_pflex_split x ({ gamma; _ } as ctx) =
 
 let rec is_in_dom_ alpha = function
   | [] -> false
-  | BPFlex (beta, _, _) :: _
+  | BPFlex (beta, _) :: _
   | BMFlex (beta, _, _) :: _
   | BType (beta, _) :: _ when Bindlib.eq_vars alpha beta -> true
   | _ :: tl -> is_in_dom_ alpha tl
@@ -286,8 +285,8 @@ let rec get_kind ?(seen_adt=[]) = function
   | TMod (MAbs _, _) -> return Abs
   | TMod (MRel _, a) -> get_kind ~seen_adt a
   | TArr (_, _) -> return Any
-  | Ghost -> return Any
-  | PFlex v
+  | Ghost k -> return k
+  | PFlex v -> get_pflex_def v >>= get_kind ~seen_adt
   | MFlex v
   | TVar v -> get_var_kind v
   | UGhost p -> get_kind p
@@ -368,7 +367,7 @@ let fresh_mflex k ctx =
 let fresh_pflex k ctx =
   incr counter;
   let v = Bindlib.new_var (fun v -> PFlex v) (Printf.sprintf "x%d" !counter) in
-  v, ctx <: BPFlex (v, Ghost, k)
+  v, ctx <: BPFlex (v, Ghost k)
 
 let fresh_vars args ctx = fresh_vars_ (fun (x, t) -> fresh_var x t) args ctx
 

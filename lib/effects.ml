@@ -86,7 +86,7 @@ let right_residual mu nu f =
 
 let rec norm_ty = function
   | TVar v-> TVar v
-  | Ghost -> Ghost
+  | Ghost k -> Ghost k
   | MFlex v -> MFlex v
   | PFlex v -> PFlex v
   | UGhost p -> UGhost (norm_ty p)

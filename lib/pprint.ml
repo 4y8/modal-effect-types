@@ -41,7 +41,7 @@ and ty_atom ctx fmt = function
   | TMod (mu, a) ->
     fprintf fmt "%a %a" (modality ctx) mu (ty_atom ctx) a
   | ECtx e -> fprintf fmt "[%a]" (eff_ctx ctx) e
-  | Ghost -> fprintf fmt "👻"
+  | Ghost _ -> fprintf fmt "👻"
   | a -> fprintf fmt "(%a)" (ty_fora ctx) a
 
 and eff ctx fmt { eff_name; eff_args; _ } =
@@ -87,8 +87,8 @@ let bind fmt = function
     fprintf fmt "^%s : %a = %a" (Bindlib.name_of v) kind k ty a
   | Lock (nu, _) ->
     fprintf fmt "🔒 %a" mu nu
-  | BPFlex (v, a, k) ->
-    fprintf fmt "ˇ%s : %a = %a" (Bindlib.name_of v) kind k ty a
+  | BPFlex (v, a) ->
+    fprintf fmt "ˇ%s = %a" (Bindlib.name_of v) ty a
 
 let context fmt gamma =
   pp_print_list ~pp_sep:(fun fmt () -> fprintf fmt ",@ ") bind fmt gamma

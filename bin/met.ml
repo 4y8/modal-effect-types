@@ -22,11 +22,11 @@ let open_file f tctx ectx =
           (v, m) :: p, ctx
         | None ->
           (if !skeleton then
-            let a, ctx' = Core.Frost.sk_infer (Check Ghost) m ([], None) ctx in
+            let a, ctx' = Core.Frost.sk_infer (Check (Ghost Any)) m ([], None) ctx in
             let a = Core.Frost.subst_suffix ctx'.gamma a in
             Format.printf "%s : %a@." x Core.Pprint.ty a);
           let (a, m), ctx' = try
-              Core.Frost.finfer (Infer Ghost) m ([], None) ctx
+              Core.Frost.finfer Infer m ([], None) ctx
             with
             | Core.Frost.UnifyError (a, b) -> Core.Errors.cannot_unify None a b
           in
@@ -76,7 +76,7 @@ let repl () =
       match tl with
       | TLExpr m ->
         let (a, m), ctx' =
-            Core.Frost.finfer (Infer Ghost) m ([], None) ctx
+            Core.Frost.finfer Infer m ([], None) ctx
         in
         let a = Core.Frost.subst_suffix ctx'.gamma a in
         let v = Core.Eval.eval ectx m in
@@ -93,7 +93,7 @@ let repl () =
                 let (_, m), _ = Core.Frost.finfer (Check a) m ([], None) ctx in
                 a, v, m, ctx
               | None ->
-                let (a, m), ctx' = Core.Frost.finfer (Infer Ghost) m ([], None) ctx in
+                let (a, m), ctx' = Core.Frost.finfer Infer m ([], None) ctx in
                 let a = Core.Frost.subst_suffix ctx'.gamma a in
                 let v, ctx = Core.Context.fresh_var x a ctx in
                 a, v, m, ctx

@@ -5,21 +5,20 @@ exception UnifyError of pure_type * pure_type
 exception Occurs of tvar * pure_type
 
 type mode
-  = Infer of pure_type
+  = Infer
   | Check of pure_type
   | Fun of pure_type * mode
 
-let infer_ = Bindlib.box_apply (fun a -> Infer a)
 let check_ = Bindlib.box_apply (fun a -> Check a)
 let fun_ = Bindlib.box_apply2 (fun a m -> Fun (a, m))
 
 let rec box_mode = function
-  | Infer a -> infer_ (box_type a)
+  | Infer -> Bindlib.box Infer
   | Check a -> check_ (box_type a)
   | Fun (a, m) -> fun_ (box_type a) (box_mode m)
 
 let rec is_guarded a theta = match a with
-  | UGhost _ | Ghost | TForA _ | TMod _ -> false
+  | UGhost _ | Ghost _ | TForA _ | TMod _ -> false
   | TVar _ | TCon _ | MFlex _ | TArr _ -> true
   | PFlex v -> is_guarded (get_pflex_def_ v theta) theta
   | ECtx _ -> failwith "is_guarded: internal error"
@@ -38,10 +37,6 @@ let rec is_mono = function
   | TArr (a, b) -> is_mono a && is_mono b
   | _ -> false
 
-let is_ghost = function
-  | Ghost -> true
-  | _ -> false
-
 let subst_var a b v =
   Bindlib.(subst (bind_var v (box_type a) |> unbox) b)
 
@@ -50,7 +45,7 @@ let subst_var_sk m a v =
 
 let subst_suffix xi s =
   List.fold_left (fun t b -> match b with
-      | BPFlex (a, p, _) -> subst_var t p a
+      | BPFlex (a, p) -> subst_var t p a
       | BMFlex (a, Some tau, _) -> subst_var t tau a
       | _ -> t) s xi
 
@@ -70,11 +65,11 @@ let guess_mono =
       let v, a = Bindlib.unbind a in
       let l, a = aux l a in
       l, Bindlib.(box_type a |> bind_var v |> tfora_ k |> unbox)
-    | Ghost ->
+    | Ghost k ->
       incr counter;
       let v = Bindlib.new_var (fun v -> MFlex v)
           (Printf.sprintf "x%d" !counter) in
-      (BMFlex (v, None, Any)) :: l, MFlex v
+      (BMFlex (v, None, k)) :: l, MFlex v
     | TArr (a, b) ->
       let l, a = aux l a in
       let l, b = aux l b in
@@ -107,12 +102,13 @@ let end_rule () =
 let rec join_sk s p theta ctx =
   match s, p with
   (* U-GhostL *)
-  | Ghost, p ->
-    rule "U-GhostL"; end_rule ();
+  | Ghost k, p when k = Any || is_abs p ctx |> fst ->
+    rule "U-GhostL";
+    end_rule ();
     p, theta
 
   (* U-GhostR *)
-  | s, Ghost ->
+  | s, Ghost k when k = Any || is_abs s ctx |> fst ->
     rule "U-GhostR"; end_rule ();
     s, theta
 
@@ -302,11 +298,11 @@ and join_var alpha beta theta ctx =
     hd :: theta
 
   (* U-Flex-Flex-AssignPoly *)
-  | PFlex a, BPFlex (a', p, k) :: theta when Bindlib.eq_vars a a' ->
+  | PFlex a, BPFlex (a', p) :: theta when Bindlib.eq_vars a a' ->
     rule "U-Flex-Flex-AssignPoly";
     let q, theta = join_sk p (MFlex beta) theta ctx in
     end_rule ();
-    BPFlex (a, q, k) :: theta
+    BPFlex (a, q) :: theta
 
   (* U-Flex-Flex-SkipPoly *)
   | _, (BPFlex _ as hd) :: theta ->
@@ -348,13 +344,11 @@ and assign alpha s xi theta ctx =
     BMFlex (a', Some tau, k) :: beta
 
   (* U-Assign-SolveP *)
-  | PFlex a, BPFlex (a', q, k) :: theta when Bindlib.eq_vars a a' ->
+  | PFlex a, BPFlex (a', q) :: theta when Bindlib.eq_vars a a' ->
     rule "U-Assign-SolveP";
     let p', theta = join_sk q s (xi @ theta) ctx in
-    if k = Abs && not (is_abs p' ctx |> fst) then
-      Errors.kind_mismatch None ~expected:Abs ~got:Any p';
     end_rule ();
-    BPFlex (a', p', k) :: theta
+    BPFlex (a', p') :: theta
 
   (* U-Assign-AssignMono *)
   | MFlex _, (BMFlex (b, Some tau, _) as hd) :: theta ->
@@ -372,16 +366,16 @@ and assign alpha s xi theta ctx =
     hd :: theta
 
   (* U-Assign-AssignPoly *)
-  | MFlex _, BPFlex (b, p, k) :: theta when Bindlib.occur b (box_type s) ->
+  | MFlex _, BPFlex (b, p) :: theta when Bindlib.occur b (box_type s) ->
     rule "U-Assign-AssignPoly";
     let xi', tau = guess_mono [] p in
     let xi = xi @ xi' in
     let theta = assign alpha (subst_var s tau b) xi theta ctx in
     end_rule ();
-    BPFlex (b, tau, k) :: theta
+    BPFlex (b, tau) :: theta
 
   (* U-Assign-SkipPoly *)
-  | (MFlex a | PFlex a), (BPFlex (b, _, _) as hd) :: theta when
+  | (MFlex a | PFlex a), (BPFlex (b, _) as hd) :: theta when
       not Bindlib.(occur b (box_type s) || eq_vars b a) ->
     rule "U-Assign-SkipPoly";
     let theta = assign alpha s xi theta ctx in
@@ -423,7 +417,8 @@ and assign alpha s xi theta ctx =
     raise (UnifyError (alpha, s))
 
 let rec sk_of_mode = function
-  | Infer p | Check p -> p
+  | Infer -> Ghost Any
+  | Check p -> p
   | Fun (p, m) -> TArr (p, sk_of_mode m)
 
 type sup
@@ -435,8 +430,8 @@ let (=~) s p ({ gamma; _ } as ctx) =
 
 
 let rec prejoin p q = match p, q with
-  | Ghost, q -> q
-  | p, Ghost -> p
+  | Ghost _, q -> q
+  | p, Ghost _ -> p
   | TCon (s, a), TCon (s', a') when s = s' -> TCon (s, Array.map2 prejoin a a')
   | TVar _ as a, _ -> a
   | MFlex _ as a, _ -> a
@@ -507,11 +502,11 @@ and prejoin_mod mu nu =
   | _, _ -> None
 
 let rec presub m p q = match p, q, m with
-  | Ghost, q, _ when is_guarded q [] ->
+  | Ghost _, q, _ when is_guarded q [] ->
     q
-  | p, Ghost, _ when is_guarded p [] ->
+  | p, Ghost _, _ when is_guarded p [] ->
     p
-  | p, q, (Check _ | Infer _) when is_guarded p [] && is_guarded q [] ->
+  | p, q, (Check _ | Infer) when is_guarded p [] && is_guarded q [] ->
     prejoin p q
   | MFlex _ as p, q, Fun _ when is_guarded q [] ->
     p
@@ -546,9 +541,9 @@ let guess_mono p = fun ({ gamma; _ } as ctx) ->
 (* eta expand to avoid value restriction *)
 let guess_mono_suffix l =
   M.List.map (function
-  | BPFlex (a, p, k) ->
+  | BPFlex (a, p) ->
     let* p = guess_mono p in
-    return @@ BPFlex (a, p, k)
+    return @@ BPFlex (a, p)
   | BMFlex (_, None, _) as b ->
     add_binding b >> return b
   | b -> return b) l
@@ -662,7 +657,7 @@ let rec broom loc m n s e =
   let* gs = is_guarded s in
   match m, n, s with
   (* SI-Infer *)
-  | Infer Ghost, _, s ->
+  | Infer, _, s ->
     rule "SI-Infer" >>
     end_rule s
 
@@ -731,7 +726,7 @@ let rec broom loc m n s e =
     end_rule s'
 
   (* SI-Ghost *)
-  | (Fun _ | Check _), Sk, Ghost ->
+  | (Fun _ | Check _), Sk, Ghost _ ->
     rule "SI-Ghost" >>
     end_rule @@ sk_of_mode m
 
@@ -760,7 +755,7 @@ let rec broom loc m n s e =
     end_rule
 
   (* SI-UnivGhostR *)
-  | Check Ghost, Sk, s when gs && not (is_pflex s) ->
+  | Check (Ghost _), Sk, s when gs && not (is_pflex s) ->
     rule "SI-UnivGhostR" >>
     end_rule (UGhost s)
 
@@ -771,7 +766,7 @@ and broom_flex_poly loc xi m n alpha e =
   let* b = pop_binding () in
   match b with
   (* SI-FlexPoly-Solve-Ty and SI-FlexPoly-Solve-Sk *)
-  | BPFlex (a', q, k) when Bindlib.eq_vars a' alpha ->
+  | BPFlex (a', q) when Bindlib.eq_vars a' alpha ->
     rule "SI-FlexPoly-Solve" >>
     let q' = presub m q (sk_of_mode m) in
     add_bindings xi >>
@@ -781,7 +776,7 @@ and broom_flex_poly loc xi m n alpha e =
       (* SI-FlexPoly-Solve-Sk *)
       | Sk -> return q' in
     let* t = broom loc m n a e in
-    add_binding (BPFlex (a', a, k)) >>
+    add_binding (BPFlex (a', a)) >>
     end_rule t
 
   (* SI-FlexPoly-AssignMono *)
@@ -833,7 +828,7 @@ let sub loc m n p e =
   return @@ subst_suffix xi' s
 
 let split_fun loc = function
-  | Ghost -> return (Ghost, Ghost)
+  | Ghost Any -> return (Ghost Any, Ghost Any)
   | TArr (p, q) -> return (p, q)
   | MFlex a ->
     let* b = fresh_mflex Any in
@@ -845,7 +840,7 @@ let split_fun loc = function
 let unfun_mode m p = match m with
   | Fun (_, m) -> m
   | Check _ -> Check p
-  | Infer _ -> Infer p
+  | Infer -> Infer
 
 let rec split_fun_check loc a e = match a with
   (* NEW *)
@@ -880,7 +875,8 @@ let rec split_pat vars mu e a { spat; ploc } =
     | None -> Errors.unknown_cons ploc con None
     | Some (c, targs, l) ->
       let* _, args =
-        sub ploc (Check g) Ty (TCon (c, Array.make (List.length targs) Ghost))
+        sub ploc (Check g) Ty
+          (TCon (c, Array.make (List.length targs) (Ghost Any)))
           Effects.(apply_mod mu e) $> Type.split_cons None in
       let l = Bindlib.msubst l args in
       let* res, l = M.List.fold_right (fun (a, p) (vars, l) ->
@@ -925,25 +921,25 @@ let rec sk_infer m { sexpr; loc } e = match m, sexpr with
     sub loc m Sk a e >>= end_rule
 
   (* PI-Freeze *)
-  | Check Ghost, SFreeze m ->
+  | Check (Ghost _), SFreeze m ->
     rule "PI-Freeze" >>
-    sk_infer (Infer Ghost) m e >>=
+    sk_infer Infer m e >>=
     end_rule
 
   (* PI-AbsCheck *)
-  | Check Ghost, SLam (x, None, m) ->
+  | Check (Ghost _), SLam (x, None, m) ->
     rule "PI-AbsCheck" >>
     let* q, xi =
       protect_context begin
-        let* _ = fresh_var x Ghost in
+        let* _ = fresh_var x (Ghost Any) in
         get_suffix @@
-        sk_infer (Check Ghost) m e
+        sk_infer (Check (Ghost Any)) m e
       end in
     add_bindings xi >>
-    end_rule @@ UGhost (TArr (Ghost, q))
+    end_rule @@ UGhost (TArr (Ghost Any, q))
 
   (* PI-Abs *)
-  | (Fun _ | Infer _) as mode, SLam (x, None, m) ->
+  | (Fun _ | Infer) as mode, SLam (x, None, m) ->
     rule "PI-Abs" >>
     let* p, q = split_fun loc (sk_of_mode mode) in
     let* q', xi =
@@ -956,20 +952,20 @@ let rec sk_infer m { sexpr; loc } e = match m, sexpr with
     end_rule @@ TArr (p, q')
 
   (* PI-AbsAnnoCheck *)
-  | Check Ghost, SLam (x, Some a, m) ->
+  | Check (Ghost _), SLam (x, Some a, m) ->
     rule "PI-AbsAnnoCheck" >>
     let* a = Type.check_type a in
     let* q, xi =
       protect_context begin
         let* _ = fresh_var x a in
         get_suffix @@
-        sk_infer (Check Ghost) m e
+        sk_infer (Check (Ghost Any)) m e
       end in
     add_bindings xi >>
     end_rule @@ UGhost (TArr (a, q))
 
   (* PI-Abs *)
-  | (Fun _ | Infer _) as mode, SLam (x, Some a, m) ->
+  | (Fun _ | Infer) as mode, SLam (x, Some a, m) ->
     rule "PI-Abs" >>
     let* a = Type.check_type a in
     let* _, q = split_fun loc (sk_of_mode mode) in
@@ -985,7 +981,7 @@ let rec sk_infer m { sexpr; loc } e = match m, sexpr with
   (* PI-App *)
   | mode, SApp (m, n) ->
     rule "PI-App" >>
-    let* p = sk_infer (Check Ghost) n e in
+    let* p = sk_infer (Check (Ghost Any)) n e in
     let* q' = sk_infer (Fun (p, mode)) m e >>= split_fun None $> snd in
     end_rule q'
 
@@ -1001,7 +997,7 @@ let rec sk_infer m { sexpr; loc } e = match m, sexpr with
       | Some p -> return p
     in
     let { op_out; _ } = Bindlib.msubst bop
-        (Array.make (List.length eargs) Ghost) in
+        (List.map (fun k -> Ghost k) eargs |> Array.of_list) in
     sub loc mode Sk op_out e >>= 
     end_rule
 
@@ -1015,8 +1011,10 @@ let rec sk_infer m { sexpr; loc } e = match m, sexpr with
         let (op, (loc, _, _, _)) = List.hd h in
         Errors.unknown_eff loc op
     in
-    let* p = sk_infer (Infer Ghost) m e in
-    let d = [{ eff_name; eff_args = Array.make (List.length eargs) Ghost; eff_ho = eho }] in
+    let* p = sk_infer Infer m e in
+    let d =
+      [{ eff_name; eff_args = List.map (fun k -> Ghost k) eargs |> Array.of_list
+       ; eff_ho = eho }] in
     let* ops = Type.unfold_ext d in
     let* p = protect_context @@
       let* _ = fresh_var x (TMod (MRel ([], d), p)) in
@@ -1048,14 +1046,15 @@ let rec sk_infer m { sexpr; loc } e = match m, sexpr with
           | None -> Errors.unknown_cons ploc con None
           | Some x -> return x
         in
-        let* targs = TCon (c, Array.make (List.length args) Ghost) =~ p
+        let* targs = TCon (c, List.map (fun k -> Ghost k) args
+                           |> Array.of_list) =~ p
                      $> Type.split_cons None $> snd in
         M.List.iter2 split_pat (Bindlib.msubst bp targs) l
     in
-    let* p = sk_infer (Infer Ghost) m e in
+    let* p = sk_infer Infer m e in
     M.List.map (fun (pat, n) ->
         protect_context @@ (split_pat p pat >> sk_infer mode n e)) l >>=
-    M.List.fold_left (=~) Ghost >>=
+    M.List.fold_left (=~) (Ghost Any) >>=
     end_rule
 
   (* PI-Con *)
@@ -1070,7 +1069,7 @@ let rec sk_infer m { sexpr; loc } e = match m, sexpr with
   (* PI-Let *)
   | mode, SLet (x, m, n) ->
     rule "PI-Let" >>
-    let* s = sk_infer (Infer Ghost) m e in
+    let* s = sk_infer Infer m e in
     protect_context @@
     let* _ = fresh_var x s in
     (sk_infer mode n e >>= end_rule)
@@ -1132,7 +1131,7 @@ let rec finfer m { sexpr; loc } e = match m, sexpr with
   (* I-Freeze *)
   | Check a, SFreeze m ->
     rule "I-Freeze" >>
-    let* b, m = finfer (Infer Ghost) m e in
+    let* b, m = finfer Infer m e in
     let* _ = b =~ a in
     end_rule (a, m)
 
@@ -1155,7 +1154,7 @@ let rec finfer m { sexpr; loc } e = match m, sexpr with
     end
 
   (* I-Abs and I-AbsAnno *)
-  | (Infer _ | Fun _) as mode, SLam (x, a', m) ->
+  | (Infer | Fun _) as mode, SLam (x, a', m) ->
     rule "I-Abs" >>
     let* p, q = split_fun loc (sk_of_mode mode) in
     let* a = match a' with
@@ -1179,7 +1178,7 @@ let rec finfer m { sexpr; loc } e = match m, sexpr with
   (* I-App *)
   | mode, SApp (m, n) ->
     rule "I-App" >>
-    let* p = sk_infer (Check Ghost) n e in
+    let* p = sk_infer (Check (Ghost Any)) n e in
     let* t, m = finfer (Fun (p, mode)) m e in
     let* a, b = split_fun None t in
     let* _, n = finfer (Check a) n e in
@@ -1215,7 +1214,7 @@ let rec finfer m { sexpr; loc } e = match m, sexpr with
     let d = [{ eff_name; eff_args; eff_ho = eho }] in
     let nu = MRel ([], d) in
     let* a, m = with_binding (Lock (nu, e)) @@
-      finfer (Infer Ghost) m (Effects.extend d e) in
+      finfer Infer m (Effects.extend d e) in
     let* b, n = protect_context @@
       let* ret = fresh_var x (TMod (nu, a)) in
       let* b, n = finfer mode n e in
@@ -1253,7 +1252,7 @@ let rec finfer m { sexpr; loc } e = match m, sexpr with
   (* I-Match *)
   | mode, SMatch (m, l) -> 
     rule "I-Match" >>
-    let* b, m = finfer (Infer Ghost) m e in
+    let* b, m = finfer Infer m e in
     let check_branch (p, n) =
       protect_context @@
       let* vars, p = split_pat [] Effects.id e b p in
@@ -1262,13 +1261,13 @@ let rec finfer m { sexpr; loc } e = match m, sexpr with
       return (a, (p, Bindlib.(n |> box_expr |> bind_mvar mvar |> unbox)))
     in
     let* a, l = M.List.map check_branch l $> List.split in
-    let* a = M.List.fold_left (join loc e) Ghost a in
+    let* a = M.List.fold_left (join loc e) (Ghost Any) a in
     end_rule (a, Match (m, l))
 
   (* I-Let *)
   | mode, SLet (x, m, n) ->
     rule "I-Let" >>
-    let* a, m = finfer (Infer Ghost) m e in
+    let* a, m = finfer Infer m e in
     let* b, n, v = protect_context @@
       let* v = fresh_var x a in
       let* b, n = finfer mode n e in
@@ -1279,11 +1278,11 @@ let rec finfer m { sexpr; loc } e = match m, sexpr with
     finfer mode (let_of_seq loc m n) e
 
   (* I-MaskInfer *)
-  | Infer _ as mode, SMask (l, m) -> 
+  | Infer, SMask (l, m) -> 
     let* l = Type.check_mask l in
     let* a, m =
       with_binding (Lock (MRel (l, []), e)) @@
-      finfer mode m (Effects.remove_labels e l)
+      finfer Infer m (Effects.remove_labels e l)
     in
     end_rule (TMod (MRel (l, []), a), Mask (l, m))
 
@@ -1300,7 +1299,7 @@ let rec finfer m { sexpr; loc } e = match m, sexpr with
   (* I-MaskSwitch *)
   | mode, (SMask _ as sexpr) ->
     rule "I-MaskSwitch" >>
-    let* a, m = finfer (Infer Ghost) { sexpr; loc } e in
+    let* a, m = finfer Infer { sexpr; loc } e in
     let* a = sub loc mode Ty a e in
     end_rule (a, m)
 

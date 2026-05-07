@@ -1,0 +1,8 @@
+type unit = Unit
+
+eff e1 = o1 : unit => unit
+eff! e2 = o2 : unit => unit
+
+val id1: []([e2, e1]{unit} -> [e1, e2]{unit})
+let id1 f = f
+

@@ -41,7 +41,7 @@ let stunit = { stype = STCons ("unit", []); tloc = None }
 %token <string> STRING
 %token <int> INT
 %token HANDLE DO WITH RETURN EFF FUN TYPE IF THEN ELSE FORALL MATCH MASK LET
-%token IN END VAL OF EFFECT OPEN
+%token IN END VAL OF OPEN
 %token PLUS MINUS TIMES AND CARET DSCOL
 %token LANGLE RANGLE LSQUARE RSQUARE LCURLY RCURLY LPAR RPAR LFREEZE RFREEZE
 %token COMMA PIPE ARROW DARROW DOT DCOL EQU WILDCARD AT SCOL BANG
@@ -90,7 +90,6 @@ let atom_type :=
   | loc_type (
     | LCURLY; t = stype; RCURLY;
     { STArr (stunit, t) }
-    | LSQUARE; ~ = separated_list(COMMA, seff); RSQUARE ; <SECtx>
     | ~ = IDENT; <STVar>)
 
 let mod_type :=
@@ -113,7 +112,6 @@ by the programmer as it can be infered *)
 
 let targ :=
   | LSQUARE; x = IDENT; RSQUARE; { (x, Abs) }
-  | LPAR; x = IDENT; DCOL; EFFECT; RPAR; { (x, Effect) }
   | x = IDENT; { (x, Any) }
 
 let targ_loc :=

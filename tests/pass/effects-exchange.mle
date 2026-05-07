@@ -1,0 +1,17 @@
+type unit = Unit
+
+eff e1 = o1 : unit => unit
+eff e2 = o2 : unit => unit
+eff! e3 = o3 : unit => unit
+
+val id1 : []([e1, e2]{unit} -> [e2, e1]{unit})
+let id1 f = f
+
+val id2 : []([e3, e1, e2]{unit} -> [e3, e2, e1]{unit})
+let id2 f = f
+
+val id3 : []([e1, e2, e3]{unit} -> [e2, e1, e3]{unit})
+let id3 f = f
+
+val id4 : []([e1, e3]{unit} -> [e3, e1]{unit})
+let id4 f = f

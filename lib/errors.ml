@@ -77,23 +77,8 @@ let rec sub_eff fmt d d' =
         ) eff_args eff_args';
       sub_eff fmt tl d'
 
-let eq_eff_var fmt eps eps' =
-  if not Effects.(eq_eff_var eps eps') then begin
-    text fmt "effect variables %a and %a do not match"
-      ectx ([], Some eps) ectx ([], Some eps');
-    raise End
-  end
-
-let sub_eff_ctx fmt (d, eps) (d', eps') =
-  sub_eff fmt d d';
-  match eps, eps' with
-  | None, _ -> ()
-  | Some eps, Some eps' ->
-    eq_eff_var fmt eps eps';
-    text fmt "in presence of effect variables, the prefixes should be equivalent but ";
-    sub_eff fmt d' d
-  | Some _, _ ->
-    text fmt "there is an effect variable in the former but not in the latter"
+let sub_eff_ctx fmt e e' =
+  sub_eff fmt e e'
 
 let rec extract fmt d l = match d with
   | [] -> if l <> [] then
@@ -127,8 +112,8 @@ let sub_mod fmt mu nu f = match mu, nu with
     sub_eff fmt d' d;
     text fmt
       "each label present in only one of the masks should be present in the ambiant context %a but " ectx f;
-    extract fmt (fst f) Effects.(mask_diff l1 l2);
-    extract fmt (fst f) Effects.(mask_diff l2 l1);
+    extract fmt f Effects.(mask_diff l1 l2);
+    extract fmt f Effects.(mask_diff l2 l1);
   | MRel _, MAbs _ ->
     text fmt
       "a relative modality cannot be a submodality of an absolute modality"
@@ -168,7 +153,7 @@ let right_residual fmt mu nu f =
     raise End
   | MRel (l', _), MRel (l, _) ->
     text fmt "in the context %a of the variable, " ectx f;
-    extract fmt (fst f) Effects.(mask_diff l' l)
+    extract fmt f Effects.(mask_diff l' l)
   | _, _ -> ()
 
 let no_access loc x v e =

@@ -28,7 +28,6 @@ rule lexer = parse
   | ident as s
     { match Hashtbl.find_opt ident_tbl s with
       | None -> IDENT s | Some t -> t }
-  | "Effect" { EFFECT }
   | mident as s { MIDENT s }
   | ('-'? ('0' | ['1'-'9'] digit*)) as s { INT (int_of_string s) }
   | '<' { LANGLE }

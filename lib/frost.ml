@@ -21,7 +21,6 @@ let rec is_guarded a theta = match a with
   | UGhost _ | Ghost _ | TForA _ | TMod _ -> false
   | TVar _ | TCon _ | MFlex _ | TArr _ -> true
   | PFlex v -> is_guarded (get_pflex_def_ v theta) theta
-  | ECtx _ -> failwith "is_guarded: internal error"
 
 let is_flex_var = function
   | MFlex _ | PFlex _ -> true
@@ -54,9 +53,6 @@ let guess_mono =
     | MFlex v -> l, MFlex v
     | PFlex _ -> failwith "impossible"
     | TVar v -> l, TVar v
-    | ECtx (d, eps) ->
-      let l, d = aux_eff_ext l d in
-      l, ECtx (d, eps)
     | TCon (s, a) ->
       let l, a = aux_array l a in
       l, TCon (s, a)
@@ -74,10 +70,10 @@ let guess_mono =
       let l, a = aux l a in
       let l, b = aux l b in
       l, TArr (a, b)
-    | TMod (MAbs (d, eps), a) ->
-      let l, d = aux_eff_ext l d in
+    | TMod (MAbs e, a) ->
+      let l, d = aux_eff_ext l e in
       let l, a = aux l a in
-      l, TMod (MAbs (d, eps), a)
+      l, TMod (MAbs d, a)
     | TMod (MRel (mask, d), a) ->
       let l, d = aux_eff_ext l d in
       let l, a = aux l a in
@@ -253,21 +249,12 @@ and join_sk_mod mu nu theta ctx =
          Some (d, theta)
        else None)
   in
-  let join_sk_eff_ctx (d, eps) (d', eps') theta =
-    match join_sk_eff_ext d d' theta with
-    | None -> None
-    | Some (d, theta) ->
-      match eps, eps' with
-      | None, None -> Some ((d, None), theta)
-      | Some eps, Some eps' when Effects.eq_eff_var eps eps' ->
-        Some ((d, Some eps), theta)
-      | _, _ -> None
-  in
+  let join_sk_ectx e e' theta = join_sk_eff_ext e e' theta in
   match mu, nu with
   | MRel (l, d), MRel (l', d') when Effects.eq_mask l l' ->
     Option.map (fun (d, theta) -> MRel (l, d), theta) (join_sk_eff_ext d d' theta)
   | MAbs e, MAbs e' ->
-    Option.map (fun (e, theta) -> MAbs e, theta) (join_sk_eff_ctx e e' theta)
+    Option.map (fun (e, theta) -> MAbs e, theta) (join_sk_ectx e e' theta)
   | _, _ -> None
 (* END NEW *)
 
@@ -485,20 +472,11 @@ and prejoin_mod mu nu =
         Option.map (List.cons { eff_name; eff_args; eff_ho })
           (prejoin_eff_ext d d')
   in
-  let prejoin_eff_ctx (d, eps) (d', eps') =
-    match prejoin_eff_ext d d' with
-    | None -> None
-    | Some d ->
-      match eps, eps' with
-      | None, None -> Some (d, None)
-      | Some eps, Some eps' when Effects.eq_eff_var eps eps' ->
-        Some (d, Some eps)
-      | _, _ -> None
-  in
+  let prejoin_ectx e e' = prejoin_eff_ext e e' in
   match mu, nu with
   | MRel (l, d), MRel (l', d') when Effects.eq_mask l l' ->
     Option.map (fun d -> MRel (l, d)) (prejoin_eff_ext d d')
-  | MAbs e, MAbs e' -> Option.map (fun e -> MAbs e) (prejoin_eff_ctx e e')
+  | MAbs e, MAbs e' -> Option.map (fun e -> MAbs e) (prejoin_ectx e e')
   | _, _ -> None
 
 let rec presub m p q = match p, q, m with
@@ -575,23 +553,19 @@ let rec sub_eff d d' =
 
 and (===) d d' = sub_eff d d' &&& sub_eff d' d
 
-let sub_eff_ctx (d, eps) (d', eps') =
-  sub_eff d d' &&&
-  match eps, eps' with
-  | None, _ -> return true
-  | Some eps, Some eps' -> sub_eff d' d &&& (return @@ Effects.eq_eff_var eps eps')
-  | _, _ -> return false
+let sub_ectx e e'=
+  sub_eff e e'
 
 let sub_mod mu nu f =
   match mu, nu with
   | MAbs e, _ ->
-    sub_eff_ctx e (Effects.apply_mod nu f)
+    sub_ectx e (Effects.apply_mod nu f)
   | MRel (l1, d1), MRel (l2, d2) ->
     let g = Effects.apply_mod mu f in
     let g' = Effects.apply_mod nu f in
     let l, _ = Effects.(l1 >< d1) in
     let l', _ = Effects.(l2 >< d2) in
-    sub_eff_ctx g g' &&& sub_eff_ctx g' g &&&
+    sub_ectx g g' &&& sub_ectx g' g &&&
     return Effects.(eq_mask l l')
   | _, _ -> return false
 
@@ -610,16 +584,8 @@ let rec join_eff_ext d d' = match d with
         | None -> return None
         | Some e -> return (Some (hd :: e))
 
-let join_eff_ctx (d, eps) (d', eps') =
-  join_eff_ext d d' >>= function
-  | None -> return None
-  | Some d ->
-    match eps, eps' with
-    | None, eps
-    | eps, None -> return (Some (d, eps))
-    | Some eps, Some eps' when Effects.eq_eff_var eps eps' ->
-      return (Some (d, Some eps))
-    | _, _ -> return None
+let join_ectx e e' =
+  join_eff_ext e e'
 
 let rec meet_eff e e' = match e with
   | [] -> return (Some [])
@@ -634,12 +600,12 @@ let rec meet_eff e e' = match e with
 
 let join_mod m m' f = match m, m' with
   | MAbs e, MAbs e' ->
-    join_eff_ctx e e' >>= begin function
+    join_ectx e e' >>= begin function
     | None -> return None
     | Some e -> return (Some (MAbs e))
     end
   | MAbs e, MRel (l, d) | MRel (l, d), MAbs e ->
-    sub_eff_ctx e Effects.(extend d (remove_labels f l)) >>= begin function
+    sub_ectx e Effects.(extend d (remove_labels f l)) >>= begin function
     | true -> return (Some (MRel (l, d)))
     | false -> return None
     end
@@ -870,6 +836,13 @@ let rec split_con_check a e = match a with
 let app_of_con loc c l =
   List.fold_left (fun m n -> { sexpr = SApp (m, n) ; loc = m.loc })
     { sexpr = SVar c; loc = loc } l
+
+let con_of_app c m =
+  let rec get_args acc = function
+    | App (m, n) -> get_args (n :: acc) m
+    | _ -> acc
+  in
+  Con (c, get_args [] m)
 
 let let_of_seq loc m n =
   { sexpr = SLet ("_", { sexpr = SAnn (m, { stype = STCons ("unit", []) ; tloc = None }); loc = m.loc }, n ); loc }
@@ -1200,7 +1173,7 @@ let rec finfer m { sexpr; loc } e = match m, sexpr with
   (* I-Do *)
   | mode, SDo (op, m) ->
     rule "I-Do" >>
-    let* a, b = lookup_op_in_ectx op (fst e) >>= function
+    let* a, b = lookup_op_in_ectx op e >>= function
     | None -> Errors.unknown_eff loc op
     | Some (l, ({ op_in; op_out; _ }, { eff_ho; _ }), _) ->
       (if eff_ho && l <> [] then
@@ -1255,15 +1228,19 @@ let rec finfer m { sexpr; loc } e = match m, sexpr with
     let* b = M.List.fold_left (join loc e) b b' in
     end_rule (b, Hand (m, ops, n, h))
 
-  (* I-Con *)
+  (* I-ConCheck *)
   | Check a, (SCons (c, l) as m) when Type.is_val m ->
     rule "I-ConCheck" >>
-    (protect_context @@ let* a, e = split_con_check a e in
-     (finfer (Check a) (app_of_con loc c l) e >>= end_rule))
+    protect_context @@
+    let* a, e = split_con_check a e in
+    (finfer (Check a) (app_of_con loc c l) e $>
+     Pair.map_snd (con_of_app c) >>= end_rule)
 
+  (* I-Con *)
   | mode, SCons (c, l) ->
     rule "I-Con" >>
-    finfer mode (app_of_con loc c l) e >>=
+    finfer mode (app_of_con loc c l) e $>
+    Pair.map_snd (con_of_app c) >>=
     end_rule
 
   (* I-Match *)

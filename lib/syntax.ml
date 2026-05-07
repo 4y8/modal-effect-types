@@ -1,7 +1,7 @@
 type loc = (Lexing.position * Lexing.position) option
 let pp_loc _ _ = ()
 
-type kind = Abs | Any | Effect
+type kind = Abs | Any
 
 type surface_mdesc
   = SMAbs of surface_effect list
@@ -18,7 +18,6 @@ and surface_tdsec
   | STVar of string
   | STCons of string * surface_type list
   | STForA of string * kind * surface_type
-  | SECtx of surface_effect list
 and surface_type = { stype : surface_tdsec ; tloc : loc }
 
 type surface_pdesc
@@ -68,7 +67,7 @@ and pure_effect
   = { eff_name : string ; eff_args : pure_type array ; eff_ho : bool }
 
 and effect_ctx
-  = pure_effect list * (pure_type * string list) option
+  = pure_effect list
 
 and pure_type
   = TArr of pure_type * pure_type
@@ -76,7 +75,6 @@ and pure_type
   | TVar of tvar
   (* use arrays to use Bindlib's mbinders *)
   | TCon of string * pure_type array
-  | ECtx of effect_ctx
   | TForA of kind * (pure_type, pure_type) Bindlib.binder
   | Ghost of kind
   | UGhost of pure_type
@@ -101,8 +99,6 @@ let mrel_ l = Bindlib.box_apply (fun d -> MRel (l, d))
 
 let mabs_ = Bindlib.box_apply (fun e -> MAbs e)
 
-let ectx_ = Bindlib.box_apply (fun e -> ECtx e)
-
 let ughost_ = Bindlib.box_apply (fun p -> UGhost p)
 
 let mflex_ = Bindlib.box_var
@@ -115,7 +111,6 @@ let rec box_type = function
   | TArr (a, b) -> tarr_ (box_type a) (box_type b)
   | TCon (c, l) -> tcon_ c (Array.map box_type l)
   | TForA (k, a) -> tfora_ k (Bindlib.box_binder box_type a)
-  | ECtx e -> ectx_ (box_effect_ctx e)
   | Ghost k -> Bindlib.box (Ghost k)
   | UGhost p -> ughost_ (box_type p)
   | MFlex v -> mflex_ v
@@ -130,16 +125,10 @@ and box_effect_ext d =
   in
   Bindlib.box_list (List.map box_effect d)
 
-and box_effect_ctx (d, eps) =
-  let eps_ = match eps with
-    | None -> Bindlib.box_opt None
-    | Some (eps, l) ->
-      Bindlib.(box_opt (Some (box_pair (box_type eps) (box l))))
-  in
-  Bindlib.box_pair (box_effect_ext d) eps_
+and box_ectx e = box_effect_ext e
 
 and box_mod = function
-  | MAbs e -> mabs_ (box_effect_ctx e)
+  | MAbs e -> mabs_ (box_ectx e)
   | MRel (l, d) -> mrel_ l (box_effect_ext d)
 
 let op_ op_name =

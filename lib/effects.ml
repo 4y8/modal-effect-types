@@ -2,12 +2,11 @@ open Syntax
 
 let erase_types = List.map (fun { eff_name; _ } -> eff_name)
 
-let rec get_first f ?(skippable = fun _ -> true) = function
+let rec get_first f = function
   | [] -> None
   | hd :: tl when f hd -> Some (hd, tl)
-  | hd :: tl when skippable hd ->
+  | hd :: tl ->
     Option.map (fun (x, l) -> x, hd :: l) (get_first f tl)
-  | _ -> None
 
 let find_label_mask lab mask =
   Option.map snd (get_first ((=) lab) mask)
@@ -18,8 +17,7 @@ let find_label_eff lab d eff_ho =
     | { eff_name; _ } as hd :: tl when eff_name = lab -> Some (hd, tl)
     | _ -> None
   else
-    get_first (fun { eff_name; _ } -> eff_name = lab)
-      ~skippable:(fun { eff_ho; _ } -> not eff_ho) d
+    get_first (fun { eff_name; _ } -> eff_name = lab) d
 
 let rec remove_labels_ext d l = match d with
   | [] -> ([], l)
@@ -29,12 +27,9 @@ let rec remove_labels_ext d l = match d with
       hd :: tl, l
     | Some l -> remove_labels_ext tl l
 
-let remove_labels (d, eps) l =
-  let d, l = remove_labels_ext d l in
-  d,
-  match eps with
-  | None -> None
-  | Some (eps, l') -> Some (eps, l @ l')
+let remove_labels d l =
+  let d, _ = remove_labels_ext d l in
+  d
 
 let rec mask_diff l l' = match l with
   | [] -> []
@@ -42,8 +37,8 @@ let rec mask_diff l l' = match l with
     | None -> hd :: mask_diff tl l'
     | Some l' -> mask_diff tl l'
 
-let extend d' (d, eps) =
-  (d' @ d, eps)
+let extend d' d =
+  d' @ d
 
 (* Section 4.2 *)
 let rec (><) l = function
@@ -79,36 +74,10 @@ let right_residual mu nu f =
   | _, MAbs _ -> Some nu
   | MAbs _, _ -> None
   | MRel (l', d'), MRel (l, d) ->
-    match extract (fst f) (mask_diff l' l) with
+    match extract f (mask_diff l' l) with
     | None -> None
     | Some f ->
       Some (MRel (erase_types d' @ (mask_diff l l'), d @ f))
-
-let rec norm_ty = function
-  | TVar v-> TVar v
-  | Ghost k -> Ghost k
-  | MFlex v -> MFlex v
-  | PFlex v -> PFlex v
-  | UGhost p -> UGhost (norm_ty p)
-  | TCon (s, a) -> TCon (s, Array.map norm_ty a)
-  | TForA (k, b) ->
-    let v, a = Bindlib.unbind b in
-    Bindlib.(bind_var v (box_type (norm_ty a)) |> tfora_ k |> unbox)
-  | TArr (a, b) -> TArr (norm_ty a, norm_ty b)
-  | TMod (MRel (l, d), a) -> TMod (MRel (l, norm_eff_ext d), norm_ty a)
-  | TMod (MAbs e, a) ->
-    TMod (MAbs (norm_eff_ctx e), norm_ty a)
-  | ECtx eps ->
-    match norm_eff_ctx eps with
-    | ([], Some (a, [])) -> a
-    | e -> ECtx e
-and norm_eff_ext d =
-  List.map (fun ({ eff_args; _ } as e) ->
-      { e with eff_args = Array.map norm_ty eff_args }) d
-and norm_eff_ctx (d, eps) = match eps with
-  | Some (ECtx e, l) ->
-    norm_eff_ctx (extend (norm_eff_ext d) (remove_labels e l))
-  | eps -> norm_eff_ext d, eps
 
 let eq_mask l l' =
   List.sort compare l = List.sort compare l'
@@ -128,43 +97,34 @@ let rec sub_eff d d' =
       Array.for_all2 eq_ty eff_args eff_args' && sub_eff tl d'
 
 and eq_ty a b = a == b ||
-  match norm_ty a, norm_ty b with
+  match a, b with
   | TVar v, TVar v' -> Bindlib.eq_vars v v'
   | TCon (c, l), TCon (c', l') ->
     c = c' && Array.for_all2 eq_ty l l'
   | TArr (a, b), TArr (a', b') -> eq_ty a a' && eq_ty b b'
   | TMod (m, a), TMod (m', a') -> eq_mod m m' && eq_ty a a'
   | TForA (k, b), TForA (k', b') -> k = k' && Bindlib.eq_binder eq_ty b b'
-  | ECtx (d, None), ECtx (d', None) -> d === d'
-  | ECtx (d, Some eps), ECtx (d', Some eps') ->
-    eq_eff_var eps eps' && d === d'
   | _, _ -> false
 
 and eq_mod m m' = match m, m' with
-  | MAbs (e, None), MAbs (e', None) -> e === e'
-  | MAbs (e, Some eps), MAbs (e', Some eps') ->
-    eq_eff_var eps eps' && e === e'
+  | MAbs e, MAbs e' -> e === e'
   | MRel (l, d), MRel (l', d') -> eq_mask l l' && d === d'
   | _, _ -> false
 
 and (===) d d' = sub_eff d d' && sub_eff d' d
 
-let sub_eff_ctx (d, eps) (d', eps') =
-  sub_eff d d' &&
-  match eps, eps' with
-  | None, _ -> true
-  | Some eps, Some eps' -> sub_eff d' d && eq_eff_var eps eps'
-  | _, _ -> false
+let sub_ectx e e' =
+  sub_eff e e'
 
 let sub_mod mu nu f = match mu, nu with
   | MAbs e, _ ->
-    sub_eff_ctx e (apply_mod nu f)
+    sub_ectx e (apply_mod nu f)
   | MRel (l1, d1), MRel (l2, d2) ->
     let g = apply_mod mu f in
     let g' = apply_mod nu f in
     let l, _ = l1 >< d1 in
     let l', _ = l2 >< d2 in
-    sub_eff_ctx g g' && sub_eff_ctx g' g &&
+    sub_ectx g g' && sub_ectx g' g &&
     eq_mask l l'
   | _, _ -> false
 
@@ -183,15 +143,8 @@ let rec join_eff_ext d d' = match d with
       Option.map (fun e -> hd :: e) (join_eff_ext d d')
     | _ -> None
 
-let join_eff_ctx (d, eps) (d', eps') =
-  match join_eff_ext d d' with
-  | None -> None
-  | Some d ->
-    match eps, eps' with
-    | None, eps
-    | eps, None -> Some (d, eps)
-    | Some eps, Some eps' when eq_eff_var eps eps' -> Some (d, Some eps)
-    | _, _ -> None
+let join_eff_ctx =
+  join_eff_ext
 
 let rec meet_eff e e' = match e with
   | [] -> Some []
@@ -218,7 +171,7 @@ let meet_mask l l' =
 let join_mod m m' f = match m, m' with
   | MAbs e, MAbs e' -> Option.map (fun e -> MAbs e) (join_eff_ctx e e')
   | MAbs e, MRel (l, d) | MRel (l, d), MAbs e ->
-    if sub_eff_ctx e (extend d (remove_labels f l))
+    if sub_ectx e (extend d (remove_labels f l))
     then Some (MRel (l, d))
     else None
   | MRel (l, d), MRel (l', d') ->

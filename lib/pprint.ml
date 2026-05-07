@@ -5,7 +5,6 @@ open Format
 let kind fmt = function
   | Any -> fprintf fmt "Any"
   | Abs -> fprintf fmt "Abs"
-  | Effect -> fprintf fmt "Effect"
 
 let mask =
   pp_print_list ~pp_sep:(fun fmt () -> fprintf fmt ", ")
@@ -40,7 +39,6 @@ and ty_atom ctx fmt = function
     fprintf fmt "%s" c
   | TMod (mu, a) ->
     fprintf fmt "%a %a" (modality ctx) mu (ty_atom ctx) a
-  | ECtx e -> fprintf fmt "[%a]" (eff_ctx ctx) e
   | Ghost _ -> fprintf fmt "👻"
   | a -> fprintf fmt "(%a)" (ty_fora ctx) a
 
@@ -53,13 +51,9 @@ and eff ctx fmt { eff_name; eff_args; _ } =
          (ty_atom ctx)) eff_args
 and eff_ext ctx =
   pp_print_list ~pp_sep:(fun fmt () -> fprintf fmt ", ") (eff ctx)
-and eff_ctx ctx fmt (d, eps) =
-  match eps with
-  | None -> eff_ext ctx fmt d
-  | Some eps when d = [] ->
-    eff_var ctx fmt eps
-  | Some eps ->
-    fprintf fmt "%a, %a" (eff_ext ctx) d (eff_var ctx) eps
+
+and eff_ctx ctx fmt e = eff_ext ctx fmt e
+
 and eff_var ctx fmt (a, l) =
   if l = [] then
     ty_atom ctx fmt a
@@ -74,7 +68,7 @@ let ty fmt a = ty_fora (Bindlib.free_vars (box_type a)) fmt a
 
 let mu fmt mu = modality (Bindlib.free_vars (box_mod mu)) fmt mu
 
-let ectx fmt ectx = eff_ctx (Bindlib.free_vars (box_effect_ctx ectx)) fmt ectx
+let ectx fmt ectx = eff_ctx (Bindlib.free_vars (box_ectx ectx)) fmt ectx
 
 let eext fmt eext = eff_ext (Bindlib.free_vars (box_effect_ext eext)) fmt eext
 

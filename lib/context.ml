@@ -64,10 +64,6 @@ let unless c f =
   else
     f ()
 
-let (@>) f g =
-  let* x = f in
-  g x
-
 module M = struct
   module List = struct
     let rec map f = function
@@ -304,13 +300,9 @@ let rec get_kind ?(seen_adt=[]) = function
         (fun a -> get_kind ~seen_adt a $> (=) Abs) types in
     if abs then return Abs
     else return Any
-  | ECtx _ -> return Effect
 
 let is_abs a =
   get_kind a $> (=) Abs
-
-let is_type a =
-  get_kind a $> (<>) Effect
 
 let rec get_guarded = function
   | TMod (mu, t) -> let nu, g = get_guarded t in

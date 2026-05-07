@@ -46,9 +46,6 @@ let rec check_type t =
             l targs $> Array.of_list in
         return @@ TCon (c, args)
     end
-  | SECtx e ->
-    let* ectx = check_effect_ctx e in
-    return @@ ECtx ectx
   | STVar x ->
     let* tid = lookup_tid x in
     match tid with
@@ -68,7 +65,7 @@ and check_type_kind t k =
 
 and check_mod m = match m.smod with
   | SMAbs e ->
-    let* ectx = check_effect_ctx e in
+    let* ectx = check_ectx e in
     return @@ MAbs ectx
   | SMRel (l, d) ->
     let* l = check_mask l in
@@ -89,28 +86,8 @@ and check_effect_ext l =
       | None -> unknown_eff eloc seff_name
       | Some { eargs; eho; _ } -> check_effect seff eargs eho) l
 
-and check_effect_ctx l =
-  M.List.fold_right (fun ({ seff_name; eloc; _ } as seff) (d, eps) ->
-      let* eff = lookup_eff seff_name in
-      match eff with
-      | Some { eargs; eho; _ } ->
-        let* e = check_effect seff eargs eho in
-        return (e :: d, eps)
-      | None ->
-        let* v = lookup_tid seff_name in
-        match v with
-        | None -> unknown_eff eloc seff_name
-        | Some v ->
-          let* k = get_var_kind v in
-          if k <> Effect then
-            kind_mismatch eloc (TVar v) ~expected:Effect
-              ~got:k;
-          if not List.(is_empty d) then
-            non_last_evar eloc seff_name;
-          if Option.is_some eps then
-            two_effect_var eloc;
-          return ([], Some (TVar v, [])))
-    l ([], None)
+and check_ectx l =
+  check_effect_ext l
 
 and check_mask l =
   M.List.map (fun (e, loc) ->
@@ -140,11 +117,6 @@ let split_cons loc = function
   | TCon (c, l) -> c, l
   | a -> expected_cons loc a
 
-let ectx_of_type = function
-  | ECtx e -> e
-  | TVar v -> ([], Some (TVar v, []))
-  | _ -> failwith "internal error: ectx_of_type"
-
 let rec split_pat vars mu t { spat; ploc } =
   let nu, g = get_guarded t in
   let mu = Effects.compose mu nu in
@@ -171,9 +143,7 @@ let unfold_ext d =
   M.List.map (fun { eff_name; eff_args; _ } ->
       let* { eops; _ } = get_eff eff_name in
       return @@ Bindlib.msubst eops eff_args) d $> List.flatten $>
-  List.map (fun { op_name; op_in; op_out } ->
-      { op_name ; op_in = Effects.norm_ty op_in
-      ; op_out = Effects.norm_ty op_out })
+  List.map (fun { op_name; op_in; op_out } -> { op_name; op_in; op_out })
 
 let join_type loc f t t' =
   let mu, g = get_guarded t in
@@ -190,7 +160,7 @@ let join_type loc f t t' =
 let rec check ({loc; sexpr} as m) a e =
   match sexpr, a with
   (* B-Mod && T-ModAbs *)
-  | v, TMod (mu, a) when is_val v || mu = MAbs (([], None)) ->
+  | v, TMod (mu, a) when is_val v || mu = MAbs [] ->
     with_binding (Lock (mu, e)) @@
     check m a (Effects.apply_mod mu e)
 
@@ -354,7 +324,7 @@ and infer {loc; sexpr} e =
     return (App (m, n), b)
 
   (* B-AppT *)
-  | SAppT (m, ({tloc; _} as a)) ->
+  | SAppT (m, ({ tloc; _ } as a)) ->
     let* a = check_type a in
     let* m, b = infer m e in
     let mu, g = get_guarded b in
@@ -364,11 +334,11 @@ and infer {loc; sexpr} e =
     let* k' = get_kind a in
     if not (k' <<< k) then
       kind_mismatch tloc ~expected:k ~got:k' a;
-    return (m, Effects.norm_ty @@ Bindlib.subst b a)
+    return (m, Bindlib.subst b a)
 
   (* B-Do *)
   | SDo (l, m) ->
-    let* ops = unfold_ext (fst e) in
+    let* ops = unfold_ext e in
     let (a, b) = match Effects.get_op l ops with
       | None -> unknown_eff loc l
       | Some p -> p
@@ -457,7 +427,7 @@ let check_decl (prog, ctx) d = match d with
                ; gamma = List.map (fun (v, k) -> BType (v, k)) alphas @
                          ctx.gamma }
     in
-    let m, _ = check e g ([], None) ctx' in (v, m) :: prog, ctx
+    let m, _ = check e g [] ctx' in (v, m) :: prog, ctx
   | (x, SDEff (eho, args, l)), _ ->
     (* add mock definition in the context just for type verification *)
     let eargs = snd (List.split args) in
@@ -491,7 +461,7 @@ let check_decl (prog, ctx) d = match d with
            let v, types = Bindlib.unmbind l in
            let a = List.fold_right (fun a b -> TArr (a, b)) types
                (TCon (x, Array.map (fun v -> TVar v) v)) in
-           let a = TMod (MAbs ([], None), a) in
+           let a = TMod (MAbs [], a) in
            let v = Array.to_list v in
            let* _ = fresh_var c @@
              List.fold_right2
@@ -510,7 +480,7 @@ let _, init_ctx =
   let unit = TCon ("unit", [||]) in
   let (@->) t t' = TArr (t, t') in
   let v = Bindlib.new_var (fun v -> TVar v) "fail" in
-  let abs t = TMod (MAbs ([], None), t) in
+  let abs t = TMod (MAbs [], t) in
   fresh_vars
     [("+", abs (int @-> int @-> int));
      ("*", abs (int @-> int @-> int));

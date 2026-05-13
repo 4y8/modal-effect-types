@@ -1,7 +1,7 @@
 open Syntax
 open Context
 
-exception UnifyError of pure_type * pure_type
+exception UnifyError of pure_type * pure_type * expr ctx_binding list
 exception Occurs of tvar * pure_type
 
 type mode
@@ -185,7 +185,7 @@ let rec join_sk s p theta ctx =
   | TMod (mu, s), TMod (nu, p) ->
     rule "U-Mod";
     let mu', theta = match join_sk_mod mu nu theta ctx with
-    | None -> raise (UnifyError (TMod (mu, s), TMod (nu, p)))
+    | None -> raise (UnifyError (TMod (mu, s), TMod (nu, p), theta))
     | Some x -> x
     in
     let s', theta = join_sk s p theta ctx in
@@ -222,7 +222,7 @@ let rec join_sk s p theta ctx =
     theta
 
   | _ ->
-    raise (UnifyError (s, p))
+    raise (UnifyError (s, p, theta))
 
 and join_sk_array a a' theta ctx =
   let l, theta = Array.fold_right (fun (s, p) (a, theta) ->
@@ -313,7 +313,7 @@ and join_var alpha beta theta ctx =
     hd :: theta
 
   | _, [] ->
-    raise (UnifyError (alpha, MFlex beta))
+    raise (UnifyError (alpha, MFlex beta, theta))
 
 and assign alpha s xi theta ctx =
   match alpha, theta with
@@ -324,7 +324,7 @@ and assign alpha s xi theta ctx =
       raise (Occurs (a, s));
     let beta, tau = guess_mono (xi @ theta) s in
     if not (is_mono tau) then
-      raise (UnifyError (MFlex a, tau));
+      raise (UnifyError (MFlex a, tau, theta));
     if k = Abs && not (is_abs tau ctx |> fst) then
       Errors.kind_mismatch None ~expected:Abs ~got:Any tau;
     end_rule ();
@@ -401,7 +401,7 @@ and assign alpha s xi theta ctx =
     hd :: theta
 
   | _ ->
-    raise (UnifyError (alpha, s))
+    raise (UnifyError (alpha, s, theta))
 
 let rec sk_of_mode = function
   | Infer -> Ghost Any
@@ -450,7 +450,7 @@ let rec prejoin p q = match p, q with
   | TMod (mu, p), TMod (nu, q) ->
     let mu = match prejoin_mod mu nu with
       | Some mu -> mu
-      | _ -> raise (UnifyError (TMod (mu, p), TMod (nu, q)))
+      | _ -> raise (UnifyError (TMod (mu, p), TMod (nu, q), []))
     in
     TMod (mu, prejoin p q)
   (* END NEW *)
@@ -458,7 +458,7 @@ let rec prejoin p q = match p, q with
   | TArr (p1, p2), TArr (q1, q2) ->
     TArr (prejoin p1 q1, prejoin p2 q2)
   | p, q ->
-    raise (UnifyError (p, q))
+    raise (UnifyError (p, q, []))
 
 and prejoin_mod mu nu =
   let rec prejoin_eff_ext d d' = match d with
@@ -508,7 +508,7 @@ let rec presub m p q = match p, q, m with
   | TArr (p1, p2), TArr (q1, q2), Fun (_, m) ->
     TArr (prejoin p1 q1, presub m p2 q2)
   | p, q, _ ->
-    raise (UnifyError (p, q))
+    raise (UnifyError (p, q, []))
 
 let guess_mono_ = guess_mono
 
@@ -782,7 +782,8 @@ and broom_flex_poly loc xi m n alpha e =
   | Marker | Lock _ -> failwith "broom_flex_poly: should not happen"
 
   | _ ->
-    raise (UnifyError (PFlex alpha, sk_of_mode m))
+    fun ctx ->
+    raise (UnifyError (PFlex alpha, sk_of_mode m, ctx.gamma))
 
 let sub loc m n p e =
   let* s, xi = get_suffix @@
@@ -872,11 +873,14 @@ let rec split_pat vars mu e a { spat; ploc } =
 let join loc f a b =
   let mu, a = get_guarded a in
   let nu, b = get_guarded b in
-  join_mod mu nu f >>= function
-  | None -> Errors.mod_mismatch loc ~expected:mu ~got:nu f
-  | Some mu ->
-    let* a = a =~ b in
-    return (TMod (mu, a)) 
+  let* a = a =~ b in
+  is_abs a >>= function
+  | true -> return a
+  | false ->
+    join_mod mu nu f >>= function
+    | None -> Errors.mod_mismatch loc ~expected:mu ~got:nu f
+    | Some mu ->
+      return (TMod (mu, a)) 
 
 let rec sk_infer m { sexpr; loc } e = match m, sexpr with
   | m, SInt _ ->
@@ -1001,18 +1005,24 @@ let rec sk_infer m { sexpr; loc } e = match m, sexpr with
       [{ eff_name; eff_args = List.map (fun k -> Ghost k) eargs |> Array.of_list
        ; eff_ho = eho }] in
     let* ops = Type.unfold_ext d in
-    let* p = protect_context @@
+    let* p, xi = protect_context @@
       let* _ = fresh_var x (TMod (MRel ([], d), p)) in
+      get_suffix @@
       sk_infer mode n e
     in
+    add_bindings xi >>
     let sk_infer_clause (li, (loc, pi, ri, ni)) =
       match Effects.get_op li ops with
       | None -> Errors.unknown_eff loc li
       | Some (ai, bi) ->
-        protect_context @@
-        let* _ = fresh_var pi ai in
-        let* _ = fresh_var ri (TArr (bi, p)) in
-        sk_infer mode ni e
+        let* p, xi = 
+          protect_context @@
+          let* _ = fresh_var pi ai in
+          let* _ = fresh_var ri (TArr (bi, p)) in
+          get_suffix @@
+          sk_infer mode ni e
+        in
+        add_bindings xi >> return p
     in
     let* p' = M.List.map sk_infer_clause h in
     M.List.fold_left (=~) p p' >>=
@@ -1038,7 +1048,11 @@ let rec sk_infer m { sexpr; loc } e = match m, sexpr with
     in
     let* p = sk_infer Infer m e in
     M.List.map (fun (pat, n) ->
-        protect_context @@ (split_pat p pat >> sk_infer mode n e)) l >>=
+        let* p, xi =
+          protect_context @@
+          (split_pat p pat >> get_suffix (sk_infer mode n e))
+        in
+        add_bindings xi >> return p) l >>=
     M.List.fold_left (=~) (Ghost Any) >>=
     end_rule
 
@@ -1200,12 +1214,14 @@ let rec finfer m { sexpr; loc } e = match m, sexpr with
     let nu = MRel ([], d) in
     let* a, m = with_binding (Lock (nu, e)) @@
       finfer Infer m (Effects.extend d e) in
-    let* b, n = protect_context @@
+    let* (b, n), xi = protect_context @@
       let* ret = fresh_var x (TMod (nu, a)) in
+      get_suffix @@
       let* b, n = finfer mode n e in
       let n = Bindlib.(n |> box_expr |> bind_var ret |> unbox) in
       return (b, n)
     in
+    add_bindings xi >>
     let* ops = Type.unfold_ext d in
     let homod = if eho then fun a ->
         is_abs a >>= function
@@ -1216,13 +1232,15 @@ let rec finfer m { sexpr; loc } e = match m, sexpr with
       match Effects.get_op li ops with
       | None -> Errors.unknown_eff loc li
       | Some (ai, bi) ->
-        protect_context @@
-        let* pi = homod ai >>= fresh_var pi in
-        let* bi = homod bi in
-        let* ri = fresh_var ri (TArr (bi, b)) in
-        let* bi, ni = finfer mode ni e in
-        return (bi, (li, Bindlib.(box_expr ni |> bind_var ri |> bind_var pi
-                             |> unbox)))
+        let* bi, ni, xi = 
+          protect_context @@
+          let* pi = homod ai >>= fresh_var pi in
+          let* bi = homod bi in
+          let* ri = fresh_var ri (TArr (bi, b)) in
+          let* (bi, ni), xi = get_suffix @@ finfer mode ni e in
+          return (bi, (li, Bindlib.(box_expr ni |> bind_var ri |> bind_var pi
+                             |> unbox)), xi)
+        in add_bindings xi >> return (bi, ni)
     in
     let* b', h = M.List.map check_clause h $> List.split in
     let* b = M.List.fold_left (join loc e) b b' in

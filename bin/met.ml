@@ -17,7 +17,9 @@ let open_file f tctx ectx =
             try
               Core.Frost.finfer (Check a) m [] ctx
             with
-            | Core.Frost.UnifyError (a, b) -> Core.Errors.cannot_unify None a b
+            | Core.Frost.UnifyError (a, b, theta) ->
+              Core.Errors.cannot_unify None (Core.Frost.subst_suffix theta a)
+                (Core.Frost.subst_suffix theta b)
           in
           (v, m) :: p, ctx
         | None ->
@@ -28,7 +30,9 @@ let open_file f tctx ectx =
           let (a, m), ctx' = try
               Core.Frost.finfer Infer m [] ctx
             with
-            | Core.Frost.UnifyError (a, b) -> Core.Errors.cannot_unify None a b
+            | Core.Frost.UnifyError (a, b, theta) ->
+              Core.Errors.cannot_unify None (Core.Frost.subst_suffix theta a)
+                (Core.Frost.subst_suffix theta b)
           in
           let a = Core.Frost.subst_suffix ctx'.gamma a in
           if !verbose then

@@ -1,0 +1,184 @@
+-- Foundations for Programming and Implementing Effect Handlers by Daniel Hillerström
+-- Chapter 2
+
+type unit = Unit
+type pair a b = Pair of a, b
+type bool = True | False
+type list a = Nil | Cons of a, list a
+
+val snd : forall a b . [](a * b -> b)
+let snd p =
+  match p with
+  | Pair (_, x) -> x
+  end
+
+val append : forall a . [](list a -> list a -> list a)
+let append l l' =
+  match l with
+  | Nil -> l'
+  | Cons (hd, tl) -> Cons (hd, append tl l')
+  end
+
+type file_desc = FD of int
+
+eff bio = write : file_desc * string => unit
+
+val basicIO : forall [a] . [](<bio>{a} -> a * string)
+let basicIO m =
+  handle m! with
+  | return res => (res, "")
+  | write x k =>
+    let (res, file) = k! in
+    (res, (snd x) ^ file)
+  end
+
+val stdout : file_desc
+
+val echo : [bio](string -> unit)
+let echo cs = do write (stdout, cs)
+
+eff status = exit : int => forall [a] . a
+
+val exit : forall [a] . [status](int -> a)
+let exit n = do exit n
+
+val status : forall [a] . [](<status>{a} -> int)
+let status m =
+  handle m! with
+  | return v => 0
+  | exit n k => n
+  end
+
+let example1 = basicIO { status { echo "dead"; exit 1; echo "code" } }
+
+type user = Alice | Bob | Lucile | Root
+
+eff ask = ask : unit => string
+
+val env : forall [a] . [](user -> <ask>{a} -> a)
+let env user m =
+  handle m! with
+  | return res => res
+  | ask _ k =>
+    match user with
+    | Alice -> k "alice"
+    | Bob -> k "bob"
+    | Lucile -> k "lucile"
+    | Root -> k "root"
+    end
+  end
+
+val whoami : [ask](unit -> string)
+let whoami () = do ask ()
+
+eff su = su : user => unit
+
+-- without () gives a weird error message, try to get a better message
+val su : [su](user -> unit)
+let su user = do su user
+
+-- no masking in the links version
+val sessionmgr : forall [a] . [](user -> <ask, su>{a} -> a)
+let sessionmgr user m =
+  env user { handle m! with
+             | return res => res
+             | su user' k => mask<ask> (env user' k)
+             end }
+
+let example2 =
+  basicIO { sessionmgr Root { status { su Alice; echo (whoami!); echo " ";
+                                       su Bob; echo (whoami!); echo " ";
+                                       su Root; echo (whoami!); echo " " } } }
+
+eff fork = fork : unit => bool
+
+val fork : [fork](unit -> bool)
+let fork () = do fork ()
+
+val nondet : forall a . [](<fork>{a} -> list (<fork>a))
+let nondet m =
+  handle m! with
+  | return res => Cons (res, Nil)
+  | fork _ k => append (k True) (k False)
+  end
+
+val ritchie : [bio](unit -> unit)
+let ritchie! =
+  echo "UNIX is basically ";
+  echo "a simple operating system, ";
+  echo "but ";
+  echo "you have to be a genius  to understand the simplicity."
+
+val hamlet : [bio](unit -> unit)
+let hamlet! = 
+  echo "To be, or not to be, ";
+  echo "that is the question:";
+  echo "Whether ’tis nobler in the mind to suffer"
+
+let example3 =
+  basicIO { nondet { sessionmgr Root { status { if fork!
+                                                then (su Alice; ritchie!)
+                                                else (su Bob; hamlet!) } } } }
+
+eff interrupt = interrupt : unit => unit
+
+val interrupt : [interrupt](unit -> unit)
+let interrupt! = do interrupt ()
+
+-- no mention of interrupt here
+type pstate a = Done of a | Paused of { pstate a }
+
+val reify_process : forall [a] . [](<interrupt>{a} -> pstate a)
+let reify_process m =
+  handle m! with
+  | return res => Done (res)
+  | interrupt _ k => Paused (k)
+  end
+
+val example4 : forall [a] . [](<interrupt, fork>{a} -> list (<fork>(pstate a)))
+let example4 m =
+  nondet { reify_process m }
+
+val schedule : forall [a] . [](list (<fork>(pstate a)) -> list a -> list a)
+let schedule ps done =
+  match ps with
+  | Nil -> done
+  | Cons (Done (res), ps') -> schedule ps' (Cons (res, done))
+  | Cons (Paused (m), ps') -> schedule (append ps' (nondet m)) done
+  end
+
+val timeshare : forall [a] . [](<fork, interrupt>{a} -> list a)
+let timeshare m =
+  schedule (Cons (Paused ({ reify_process m }), Nil)) Nil
+
+val interrupt_write : forall [a] . [interrupt, bio](<bio>{a} -> a)
+let interrupt_write m =
+  handle m! with
+  | return res => res
+  | write x k => interrupt!; k (do write x)
+  end
+
+let example5 =
+  basicIO {
+    timeshare {
+      interrupt_write {
+        sessionmgr Root { status { if fork!
+                                   then (su Alice; ritchie!)
+                                   else (su Bob; hamlet!) } } } } }
+
+eff state [a] = get : unit => a | put : a => unit
+
+val get : forall [a] . [state a](unit -> a)
+let get! = do get ()
+
+val put : forall [a] . [state a](a -> unit)
+let put st = do put st
+
+val run_state : forall [a] [b] . [] (b -> <state b>{a} -> a * b)
+let run_state st0 m =
+  let run = handle m! with
+    | return res => fun st -> (res, st)
+    | get _ k => fun st -> k st st
+    | put st' k => fun st -> k () st'
+    end
+  in run st0

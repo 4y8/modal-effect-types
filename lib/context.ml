@@ -24,7 +24,7 @@ type 'a ctx =
   ; id : (string * var) list
   ; tid : (string * tvar) list }
 
-let (<:) ({gamma; _} as ctx) b =
+let (<:) ({ gamma; _ } as ctx) b =
   { ctx with gamma = b :: gamma }
 
 let bind f g = fun ctx ->

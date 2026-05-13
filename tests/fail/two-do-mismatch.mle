@@ -1,0 +1,10 @@
+type a1 = A1
+type a2 = A2
+type unit = Unit
+
+effect gen [a] = yield : a => unit
+
+val f : forall [a] . [](<gen a>{unit} -> unit)
+
+let wrong =
+  f { do yield A1; do yield A2 }

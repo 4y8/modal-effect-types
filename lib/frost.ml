@@ -96,6 +96,7 @@ let end_rule () =
   decr level
 
 let rec join_sk s p theta ctx =
+  let ctx = { ctx with gamma = theta } in
   match s, p with
   (* U-GhostL *)
   | Ghost k, p when k = Any || is_abs p ctx |> fst ->
@@ -316,6 +317,7 @@ and join_var alpha beta theta ctx =
     raise (UnifyError (alpha, MFlex beta, theta))
 
 and assign alpha s xi theta ctx =
+  let ctx = { ctx with gamma = theta } in
   match alpha, theta with
   (* U-Assign-SolveM *)
   | MFlex a, BMFlex (a', None, k) :: theta when Bindlib.eq_vars a a' ->
@@ -731,7 +733,6 @@ let rec broom loc m n s e =
 
 and broom_flex_poly loc xi m n alpha e =
   let* b = pop_binding () in
-  Format.printf "%a %s@." Pprint.bind b (Bindlib.name_of alpha);
   match b with
   (* SI-FlexPoly-Solve-Ty and SI-FlexPoly-Solve-Sk *)
   | BPFlex (a', q) when Bindlib.eq_vars a' alpha ->
@@ -748,7 +749,7 @@ and broom_flex_poly loc xi m n alpha e =
     end_rule t
 
   (* SI-FlexPoly-AssignMono *)
-  | BMFlex (b, Some tau, _) as bind->
+  | BMFlex (b, Some tau, _) as bind ->
     rule "SI-FlexPoly-AssignMono" >>
     let* s = broom_flex_poly loc xi (subst_var_sk m tau b) n alpha e in
     add_binding bind >>

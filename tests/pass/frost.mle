@@ -1,4 +1,3 @@
--- inspired by C1c
 
 type unit = Unit
 type bool = True | False
@@ -6,7 +5,20 @@ type pair a b = Pair of a, b
 
 eff! gen a = yield : a => unit
 
-val true : bool
-val g : ((forall a . <gen a>{ unit } -> a) -> (int * bool)) -> unit
+-- inspired by C1b
+let infer1 (f : (forall a . <gen a>{ unit } -> a)) =
+  (f { do yield 42 }, f { do yield True })
 
-let infer = g (fun f -> (f { do yield 42 }, f { do yield true }))
+-- inspired by C1c
+val g : ((forall a . <gen a>{ unit } -> a) -> (int * bool)) -> unit
+let infer2 = g (fun f -> (f { do yield 42 }, f { do yield True }))
+
+
+val poly : [](forall [a] . a -> <gen a>{ unit }) -> (int * bool)
+
+-- inspired by E2b
+val check1 : [](forall [a] . a -> <gen a>{ unit }) -> (int * bool)
+let check1 x = poly x
+
+val yield : [] (forall [a] . (a -> <gen a>{ unit }))
+let yield x = { do yield x }

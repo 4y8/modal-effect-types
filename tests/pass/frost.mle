@@ -1,0 +1,12 @@
+-- inspired by C1c
+
+type unit = Unit
+type bool = True | False
+type pair a b = Pair of a, b
+
+eff! gen a = yield : a => unit
+
+val true : bool
+val g : ((forall a . <gen a>{ unit } -> a) -> (int * bool)) -> unit
+
+let infer = g (fun f -> (f { do yield 42 }, f { do yield true }))

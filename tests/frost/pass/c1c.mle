@@ -6,4 +6,4 @@ val true : bool
 val make_pair : forall a b . a -> b -> a * b
 val g : ((forall a . a -> a) -> (int * bool)) -> unit
 
-let infer = g (fun (f : forall a . a -> a) -> make_pair (f 42) (f true))
+let infer = g (fun f -> make_pair (f 42) (f true))

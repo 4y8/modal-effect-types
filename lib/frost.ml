@@ -500,6 +500,7 @@ let rec presub m p q = match p, q, m with
     TMod (mu, presub m p q)
   | p, TMod (_, q), m ->
     presub m p q
+  | Ghost _ as p, Ghost _, _ -> p
   (* END NEW *)
  
   | UGhost p, q, m
@@ -730,6 +731,7 @@ let rec broom loc m n s e =
 
 and broom_flex_poly loc xi m n alpha e =
   let* b = pop_binding () in
+  Format.printf "%a %s@." Pprint.bind b (Bindlib.name_of alpha);
   match b with
   (* SI-FlexPoly-Solve-Ty and SI-FlexPoly-Solve-Sk *)
   | BPFlex (a', q) when Bindlib.eq_vars a' alpha ->

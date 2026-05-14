@@ -39,7 +39,8 @@ and ty_atom ctx fmt = function
     fprintf fmt "%s" c
   | TMod (mu, a) ->
     fprintf fmt "%a %a" (modality ctx) mu (ty_atom ctx) a
-  | Ghost _ -> fprintf fmt "👻"
+  | Ghost Any -> fprintf fmt "👻"
+  | Ghost Abs -> fprintf fmt "[👻]"
   | a -> fprintf fmt "(%a)" (ty_fora ctx) a
 
 and eff ctx fmt { eff_name; eff_args; _ } =

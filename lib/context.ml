@@ -326,14 +326,15 @@ let rec locks e = function
     Effects.compose m' m, f
   | _ :: tl -> locks e tl
 
-let get_type_context x ({gamma; _} as ctx) =
-  let rec get_type_context gamma x = match gamma with
-    | [] -> failwith "get_type_context: internal error"
-    | BVar (y, a) :: gamma when Bindlib.eq_vars x y -> gamma, a, []
-    | hd :: tl ->
-      let gamma, a, gamma' = get_type_context tl x in
-      gamma, a, hd :: gamma'
-  in get_type_context gamma x, ctx
+let rec get_type_context_ gamma x = match gamma with
+  | [] -> failwith "get_type_context: internal error"
+  | BVar (y, a) :: gamma when Bindlib.eq_vars x y -> gamma, a, []
+  | hd :: tl ->
+    let gamma, a, gamma' = get_type_context_ tl x in
+    gamma, a, hd :: gamma'
+
+let get_type_context x ({ gamma; _ } as ctx) =
+    get_type_context_ gamma x, ctx
 
 let fresh_tvar x k ({ gamma; tid; _ } as ctx) =
   let v = Bindlib.new_var (fun v -> TVar v) x in

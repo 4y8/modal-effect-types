@@ -2,6 +2,8 @@ open Syntax
 open Effect
 open Effect.Deep
 
+let fmt_out = ref Format.std_formatter
+
 module VMap = Map.Make(struct
     type t = var
     let compare = Bindlib.compare_vars
@@ -46,7 +48,7 @@ let stdlib =
   ; "^", VClo (fun x -> VClo (fun y -> VStr (unstr x ^ unstr y)))
   ; "&&", VClo (fun x -> VClo (fun y -> vbool (unbool x && unbool y)))
   ; "fail", VClo (fun _ -> raise Fail)
-  ; "print", VClo (fun x -> print_endline (unstr x); VCon ("Unit", []))
+  ; "print", VClo (fun x -> Format.fprintf !fmt_out "%s@." (unstr x); VCon ("Unit", []))
   ; "string_of_int", VClo (fun x -> VStr (string_of_int (unint x)))
   ]
 
@@ -102,9 +104,12 @@ let rec eval ctx = function
       | Some _, VMask v
       | None, v -> continue k (perform (Do (e, v)))
       | Some ni, v ->
+        if false then
         let open Multicont.Deep in
         let k = promote k in
         eval ctx (Bindlib.(subst (subst ni (Val v)) (Val (VClo (resume k)))))
+        else
+        eval ctx (Bindlib.(subst (subst ni (Val v)) (Val (VClo (continue k)))))
 
 and eval_pat v vals = function
   | PWild -> Some vals
@@ -120,6 +125,4 @@ and eval_pat v vals = function
     | _ -> None
 
 let eval_prog ectx p =
-  let first _ x y = match x with None -> y | _ -> x in
-  ectx :=
-    VMap.(merge first (of_list (List.map (Pair.map_snd (eval ectx)) p)) !ectx)
+  List.iter (fun (x, m) -> ectx := VMap.add x (eval ectx m) !ectx) p

@@ -5,9 +5,7 @@ tracked by a modal effect type system as described in the papers: Tang, Wenhao,
 et al. "Modal effect types." Proceedings of the ACM on Programming Languages
 9.OOPSLA1 (2025): 1130-1157. and Tang, Wenhao, and Sam Lindley. "Rows and
 Capabilities as Modal Effects." Proceedings of the ACM on Programming Languages
-10.POPL (2026): 923-950. The language has value and effect polymorphism. All
-type applications are explicit, other branches contain experiments with
-inference.
+10.POPL (2026): 923-950. The language has polymorphism with type inference.
 
 This program type checks and interprets source programs.
 
@@ -35,12 +33,13 @@ val iter : forall a . []((a -> unit) -> list a -> unit)
 let iter f l =
   match l with
   | Nil -> ()
-  | Cons (hd, tl) -> f hd; iter @a f tl
+  | Cons (hd, tl) -> f hd; iter f tl
   end
+
 let append l l' =
   match l with
   | Nil -> l'
-  | Cons (hd, tl) -> Cons (hd, append @a tl l')
+  | Cons (hd, tl) -> Cons (hd, append tl l')
   end
 ```
 
@@ -50,7 +49,7 @@ eff gen a = yield : a => unit
 
 val as_list : [](<gen int>(unit -> unit) -> list int)
 let as_list f =
-  handle<gen int> f () with
+  handle f () with
   | return u => Nil
   | yield x r => Cons (x, r ())
   end

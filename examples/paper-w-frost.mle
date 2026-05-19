@@ -18,7 +18,7 @@ let append l l' =
 
 -- section 2.3
 -- current error when omitting the modality : Cannot unbox function in application todo
-eff gen a = yield : a => unit
+eff gen [a] = yield : a => unit
 
 val as_list : [](<gen int>(unit -> unit) -> list int)
 let as_list f =
@@ -35,7 +35,7 @@ val id3 : []([gen int](unit -> unit) -> <gen int>(unit -> unit))
 let id3 f = f
 
 -- section 2.5
-eff state s = get : unit => s | put : s => unit
+eff state [s] = get : unit => s | put : s => unit
 val state : [](<state int>(unit -> unit) -> int -> unit)
 let state m =
   handle m () with

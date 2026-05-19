@@ -3,10 +3,12 @@ open Format
 
 exception Exit
 
+let err_fmt = ref Format.err_formatter
+
 let err msg =
-  Format.eprintf "@[<hov>\027[31;1mError\027[0m: ";
-  msg err_formatter;
-  Format.eprintf "@]@.";
+  Format.fprintf !err_fmt "@[<hov>\027[31;1mError\027[0m: ";
+  msg !err_fmt;
+  Format.fprintf !err_fmt "@]@.";
   raise Exit
 
 let error loc msg =
@@ -27,12 +29,12 @@ let error loc msg =
   let b = bg.pos_cnum - bg.pos_bol in
   let l = get_line bg.pos_lnum in
   let e = if nd.pos_lnum = bg.pos_lnum then nd.pos_cnum - nd.pos_bol else String.(length l) in
-  Format.eprintf "File \"%s\", line %d, characters %d-%d:\n"
+  Format.fprintf !err_fmt "File \"%s\", line %d, characters %d-%d:\n"
     bg.pos_fname bg.pos_lnum b e;
   let pref = Printf.sprintf "%d |" bg.pos_lnum in
-  Format.eprintf "%s%s\n" pref l;
+  Format.fprintf !err_fmt "%s%s\n" pref l;
   let length = e - b in
-  Format.eprintf "%s\027[31;1m%s\027[0m" (String.make (b + String.length pref) ' ')
+  Format.fprintf !err_fmt "%s\027[31;1m%s\027[0m" (String.make (b + String.length pref) ' ')
     (String.make length '^');
   err msg
 

@@ -1,0 +1,6 @@
+(executable
+ (name main)
+ (modes js)
+ (preprocess (pps js_of_ocaml-ppx))
+ (js_of_ocaml (flags (:standard --enable=effects)))
+ (libraries js_of_ocaml core))

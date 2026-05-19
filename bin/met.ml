@@ -4,7 +4,6 @@ open Core.Type
 let eval = ref false
 let launch_repl = ref true
 let verbose = ref false
-let skeleton = ref false
 
 let open_file f tctx ectx =
   let open Core.Context in
@@ -23,10 +22,6 @@ let open_file f tctx ectx =
           in
           (v, m) :: p, ctx
         | None ->
-          (if !skeleton then
-            let a, ctx' = Core.Frost.sk_infer (Check (Ghost Any)) m [] ctx in
-            let a = Core.Frost.subst_suffix ctx'.gamma a in
-            Format.printf "%s : %a@." x Core.Pprint.ty a);
           let (a, m), ctx' = try
               Core.Frost.finfer Infer m [] ctx
             with
@@ -55,7 +50,7 @@ let open_file f tctx ectx =
         Core.Error.error_str_lexbuf lb
           (Printf.sprintf "Unexpected token: \"%s\"" (Lexing.lexeme lb)) in
     let p, tctx = List.fold_left check_decl ([], tctx) p in
-    if !eval || !launch_repl then
+    if !eval then
       Core.Eval.eval_prog ectx p;
     close_in ic;
     tctx
@@ -141,7 +136,6 @@ let () =
   let spec_list =
     [ ("--eval", Arg.Set eval, "Evaluate the program (needs a main function)")
     ; ("--verbose", Arg.Set verbose, "")
-    ; ("--skeleton", Arg.Set skeleton, "Print the result skeleton inference")
     ; ("--debug", Arg.Set Core.Frost.debug, "Print debug information")]
   in
   Format.set_margin 80;

@@ -68,7 +68,7 @@ let repl () =
         try
           Core.Parser.top_level Core.Lexer.lexer lb
         with
-          _ ->
+          Core.Parser.Error ->
           Core.Error.error_str_lexbuf lb
             (Printf.sprintf "Unexpected token: \"%s\"" (Lexing.lexeme lb))
       in

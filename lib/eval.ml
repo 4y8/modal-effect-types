@@ -3,6 +3,7 @@ open Effect
 open Effect.Deep
 
 let fmt_out = ref Format.std_formatter
+let multicont = ref true
 
 module VMap = Map.Make(struct
     type t = var
@@ -64,7 +65,9 @@ let rec eval ctx = function
   | Var x ->
     begin match VMap.find_opt x !ctx with
       | Some v -> v
-      | None -> Error.error_str None "missing a definition"
+      | None ->
+         Error.error_str None
+           ("missing a definition for symbol " ^ Bindlib.name_of x)
     end
   | Lam m ->
     VClo (fun v -> eval ctx (Bindlib.subst m (Val v)))
@@ -104,12 +107,12 @@ let rec eval ctx = function
       | Some _, VMask v
       | None, v -> continue k (perform (Do (e, v)))
       | Some ni, v ->
-        if false then
-        let open Multicont.Deep in
-        let k = promote k in
-        eval ctx (Bindlib.(subst (subst ni (Val v)) (Val (VClo (resume k)))))
+        if !multicont then
+          let open Multicont.Deep in
+          let k = promote k in
+          eval ctx (Bindlib.(subst (subst ni (Val v)) (Val (VClo (resume k)))))
         else
-        eval ctx (Bindlib.(subst (subst ni (Val v)) (Val (VClo (continue k)))))
+          eval ctx (Bindlib.(subst (subst ni (Val v)) (Val (VClo (continue k)))))
 
 and eval_pat v vals = function
   | PWild -> Some vals

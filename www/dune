@@ -2,5 +2,5 @@
  (name main)
  (modes js)
  (preprocess (pps js_of_ocaml-ppx))
- (js_of_ocaml (flags (:standard --enable=effects)))
+ (js_of_ocaml (flags (:standard --effects=double-translation)))
  (libraries js_of_ocaml core))

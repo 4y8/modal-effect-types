@@ -13,7 +13,7 @@ This program type checks and interprets source programs.
 This project uses the `dune` build system; you can build it with:
 
 ``` sh
-dune build
+dune build bin/met.exe
 ```
 
 ## Using

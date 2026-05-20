@@ -4,9 +4,10 @@ open Format
 exception Exit
 
 let err_fmt = ref Format.err_formatter
+let red = ref (fun s -> Printf.sprintf "\027[31;1m%s\027[0m" s)
 
 let err msg =
-  Format.fprintf !err_fmt "@[<hov>\027[31;1mError\027[0m: ";
+  Format.fprintf !err_fmt "@[<hov>%s: " (!red "Error");
   msg !err_fmt;
   Format.fprintf !err_fmt "@]@.";
   raise Exit
@@ -34,8 +35,8 @@ let error loc msg =
   let pref = Printf.sprintf "%d |" bg.pos_lnum in
   Format.fprintf !err_fmt "%s%s\n" pref l;
   let length = e - b in
-  Format.fprintf !err_fmt "%s\027[31;1m%s\027[0m" (String.make (b + String.length pref) ' ')
-    (String.make length '^');
+  Format.fprintf !err_fmt "%s%s" (String.make (b + String.length pref) ' ')
+    (!red @@ String.make length '^');
   err msg
 
 let error_str loc s =

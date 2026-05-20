@@ -59,10 +59,6 @@ rule lexer = parse
   | "&&" { AND }
   | "()" { UNIT }
   | _ as c { error lexbuf (Printf.sprintf "Unknown character : %c" c) }
+
 {
-  let lexer x =
-  (*
-  print_endline "ee";
-  *)
-  lexer x
 }

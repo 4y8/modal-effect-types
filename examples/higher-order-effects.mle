@@ -40,10 +40,6 @@ eff co (e : Effect)
   = fork : [co e, e]{unit} => unit
   | suspend : unit => unit
 
-eff co
-  = fork : {unit} => unit
-  | suspend : unit => unit
-
 eff queue [s]
   = enqueue : s => unit
   | dequeue : unit => option s
@@ -83,18 +79,6 @@ let wakeProc! =
   match do dequeue () with
   | Some (Proc (x)) -> x!
   | None -> ()
-  end
-
-val runBFShallow : forall (e : Effect) . [queue (proc e), e]([co e, queue (proc e), e]{unit} -> unit)
-let runBFShallow c =
-  handle<co e>[queue (proc e), e]! c! with
-  | return () => (wakeProc @e)!
-  | fork p k =>
-    enqProc @e {runBFShallow @e {mask<queue> (p!)}};
-    runBFShallow @e k
-  | suspend () k =>
-    enqProc @e {runBFShallow @e k};
-    (wakeProc @e)!
   end
 
 val runBF : forall (e : Effect) . [queue (proc e), e]([co e, queue (proc e), e]{unit} -> unit)
@@ -160,12 +144,6 @@ let test n =
 
 val main : [](unit -> unit)
 let main () =
-  print "runBFShallow";
-  handle<queue int> runFifo @(proc [queue int]) @unit {runBFShallow @[queue int] {mask<queue> ((test 3)!)}} (emptyZipQ @(proc [queue int])!) with
-  | return v => ()
-  | dequeue x k => k None
-  | enqueue x k => print ("enqueue: " ^ string_of_int x); k!
-  end;
   print "runBF";
   handle<queue int> runFifo @(proc [queue int]) @unit {runBF @[queue int] {mask<queue> ((test 3)!)}} (emptyZipQ @(proc [queue int])!) with
   | return v => ()

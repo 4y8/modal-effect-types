@@ -9,11 +9,13 @@ let repl_from_file f =
           Core.Error.error_str_lexbuf lb
             (Printf.sprintf "Unexpected token: \"%s\"" (Lexing.lexeme lb)) in
   close_in ic;
-  let p, tctx = Core.Type.(check_prog init_ctx p) in
-  let ectx = ref (Core.Eval.build_stdlib_map tctx) in
+  let ectx = ref Core.Eval.stdlib in
+  let p, _ = Core.Type.(check_prog init_ctx p) in
+  let p = List.rev p in
+  let p = Core.TT.erase_types_prog p in 
   Core.Eval.eval_prog ectx p;
   let infer =
-    match Core.Eval.VMap.find (List.assoc "infer_top_level" tctx.id) !ectx with
+    match Core.Eval.SMap.find "infer_top_level" !ectx with
     | VClo f -> f
     | _ -> failwith "internal error" in
   let rec loop () =

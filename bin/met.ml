@@ -1,8 +1,10 @@
-open Core.Syntax
-open Core.Type
+open Core
+open Syntax
+open Type
 
 let eval = ref false
 let launch_repl = ref true
+let elab = ref false
 
 let open_file f tctx ectx =
   try
@@ -12,64 +14,71 @@ let open_file f tctx ectx =
     Lexing.set_filename lb f;
     let p =
       try
-        Core.Parser.file Core.Lexer.lexer lb
+        Parser.file Lexer.lexer lb
       with
         _ ->
-        Core.Error.error_str_lexbuf lb
+        Error.error_str_lexbuf lb
           (Printf.sprintf "Unexpected token: \"%s\"" (Lexing.lexeme lb)) in
     let p, tctx = check_prog tctx p in
-    Core.Eval.eval_prog ectx p;
+    let p = TT.erase_types_prog p in
+    Eval.eval_prog ectx p;
     close_in ic;
     tctx
   with
-  | Core.Error.Exit -> exit 1
+  | Error.Exit -> exit 1
 
 let repl () =
   let lb = Lexing.from_channel stdin in
-  let ectx = ref (Core.Eval.build_stdlib_map init_ctx) in
+  let ectx = ref Eval.stdlib in
   let rec loop ctx =
     try
       print_string "# ";
       flush stdout;
       let tl =
         try
-          Core.Parser.top_level Core.Lexer.lexer lb
+          Parser.top_level Lexer.lexer lb
         with
           _ ->
-          Core.Error.error_str_lexbuf lb
+          Error.error_str_lexbuf lb
             (Printf.sprintf "Unexpected token: \"%s\"" (Lexing.lexeme lb))
       in
       match tl with
       | TLExpr m ->
-        let (m, a), _ = infer m ([], None) ctx in
-        let v = Core.Eval.eval ectx m in
-        Format.printf "- : %a = %a@." Core.Pprint.ty a Core.Eval.pp_value v;
+        let (melab, a), _ = infer m ([], None) ctx in
+        let m = TT.(erase_types VMap.empty melab) in
+        let v = Eval.eval ectx m in
+        if !elab then
+          Format.printf "%a@." TT.pp_expr melab;
+        Format.printf "- : %a = %a@." Pprint.ty a Eval.pp_value v;
         loop ctx
       | TLOpen f -> loop (open_file f ctx ectx)
       | TLDecl d ->
         let ctx = match d with
           | x, SDFun m ->
-            let a, v, m, ctx =
+            let a, melab, ctx =
               match List.assoc_opt x ctx.id with
               | Some v ->
-                let (_, a, _), _ = Core.Context.get_type_context v ctx in
+                let (_, a, _), _ = Context.get_type_context v ctx in
                 let m, _ = check m a ([], None) ctx in
-                a, v, m, ctx
+                a, m, ctx
               | None ->
                 let (m, a), _ = infer m ([], None) ctx in
-                let v, ctx = Core.Context.fresh_var x a ctx in
-                a, v, m, ctx
+                let _, ctx = TT.fresh_var x a ctx in
+                a, m, ctx
             in
-            let vf = Core.Eval.eval ectx m in
-            ectx := Core.Eval.(VMap.add v vf !ectx);
-            Format.printf "val %s : %a = %a@." x Core.Pprint.ty a
-              Core.Eval.pp_value vf;
+            let m = TT.(erase_types VMap.empty melab) in
+            let vf = Eval.eval ectx m in
+            ectx := Eval.(SMap.add x vf !ectx);
+            if !elab then
+              Format.printf "%a@." TT.pp_expr melab;
+            Format.printf "val %s : %a = %a@." x Pprint.ty a
+              Eval.pp_value vf;
             ctx
           | _ -> snd (check_decl ([], ctx) (d, None))
         in
         loop ctx
     with
-    | Core.Error.Exit ->
+    | Error.Exit ->
       let fd = Unix.descr_of_in_channel stdin in
       let buf = Bytes.create 4096 in
       let rec discard_all () =
@@ -87,18 +96,17 @@ let repl () =
   loop init_ctx
 
 let read_file f =
-  let ectx = ref (Core.Eval.build_stdlib_map init_ctx) in
-  let tctx = open_file f init_ctx ectx in
+  let ectx = ref Eval.stdlib in
+  let _ = open_file f init_ctx ectx in
   if !eval then
-    match Core.Eval.VMap.find Core.Context.(List.assoc "main" tctx.id)
-            !ectx with
+    match Eval.SMap.find "main" !ectx with
     | VClo f -> ignore (f (VCon ("Unit", [])))
     | _ -> failwith "main should be a function"
 
-
 let () =
   let spec_list =
-    [("--eval", Arg.Set eval, "Evaluate the program (needs a main function)")]
+    [("--eval", Arg.Set eval, "Evaluate the program (needs a main function)")
+    ; ("--elab", Arg.Set elab, "Prints elaboration results")]
   in
   Format.set_margin 80;
   Arg.parse spec_list read_file "";

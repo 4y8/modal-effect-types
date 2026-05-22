@@ -6,7 +6,7 @@ type modality = Syntax.pure_mod
 
 type pat = Syntax.pat
 
-type ectx = Syntax.effect_ctx
+type eext = Syntax.effect_ext
 
 type kind = Syntax.kind
 
@@ -20,10 +20,12 @@ type expr
   | LetMod of modality * modality * expr * (expr, expr) Bindlib.binder
   | Do of string * expr
   | Con of string * expr list
-  | Hand of expr * ectx * (expr, expr) Bindlib.binder *
+  | Hand of expr * eext * (expr, expr) Bindlib.binder *
             (string * (expr, (expr, expr) Bindlib.binder) Bindlib.binder) list
 
-  | Match of expr * (pat * (expr, expr) Bindlib.mbinder) list
+  | Match of modality * expr * (pat * (expr, expr) Bindlib.mbinder) list
+  | Mask of string list * expr
+  | Lit of Syntax.lit
 and var = expr Bindlib.var
 
 let var_ = Bindlib.box_var
@@ -49,8 +51,11 @@ let hand_ m d ret h =
        |> Bindlib.box_list in
   Bindlib.box_apply3 (fun m ret h -> Hand (m, d, ret, h)) m ret h
 
-let match_ m l =
-  Bindlib.box_apply2 (fun m l -> Match (m, l)) m (Bindlib.box_list l)
+let match_ mu m l =
+  Bindlib.box_apply3 (fun mu m l -> Match (mu, m, l)) mu m (Bindlib.box_list l)
+
+let mask_ l =
+  Bindlib.box_apply (fun m -> Mask (l, m))
 
 let rec box_expr = function
   | Var v -> var_ v
@@ -68,10 +73,13 @@ let rec box_expr = function
     hand_ (box_expr m) d (Bindlib.box_binder box_expr ret)
       (List.map (fun (e, b) ->
            e, Bindlib.(box_binder (box_binder box_expr) b)) h)
-  | Match (m, c) ->
-    match_ (box_expr m)
+  | Match (mu, m, c) ->
+    match_ (Syntax.box_mod mu) (box_expr m)
       (List.map (fun (p, c) ->
            Bindlib.(box_pair (Syntax.box_pat p) (box_mbinder box_expr c))) c)
+  | Mask (l, m) ->
+     mask_ l (box_expr m)
+  | Lit _ as m -> Bindlib.box m
 
 let rec is_val = function
   | Mod (_, _) -> true
@@ -89,6 +97,27 @@ let rec is_val = function
 let split_var = function
   | Syntax.TMod (mu, a) -> mu, a
   | _ -> failwith "internal error"
+
+let split_arr loc = function
+  | Syntax.TArr (a, b) -> a, b
+  | a ->
+    Errors.expected_arr loc a
+
+let split_forall loc = function
+  | Syntax.TForA (k, a) -> k, a
+  | a -> Errors.expected_forall loc a
+
+let split_foralls a =
+  let rec aux l = function
+    | Syntax.TForA (k, b) ->
+      let v, a = Bindlib.unbind b in
+      aux ((v, k) :: l) a
+    | a -> a, l
+  in Pair.map_snd List.rev @@ aux [] a
+
+let split_cons loc = function
+  | Syntax.TCon (c, l) -> c, l
+  | a -> Errors.expected_cons loc a
 
 type shape = Hole | Check of Syntax.pure_type
 
@@ -135,7 +164,7 @@ let rec check ctx m s e = match m, s with
 
   (* T-App *)
   | App (m, n), Hole ->
-    let a, b = Type.split_arr None (check ctx m Hole e) in
+    let a, b = split_arr None (check ctx m Hole e) in
     let _ = check ctx n (Check a) e in
     b
 
@@ -151,7 +180,7 @@ let rec check ctx m s e = match m, s with
   (* T-TApp *)
   | TApp (m, b), Hole ->
     let a = check ctx m Hole e in
-    let k, a = Type.split_forall None a in
+    let k, a = split_forall None a in
     if k = Abs && not (fst @@ is_abs b ctx) then
       Errors.kind_mismatch None b ~expected:Syntax.Abs ~got:Syntax.Any;
     Bindlib.subst a b
@@ -164,3 +193,149 @@ let rec check ctx m s e = match m, s with
     a
 
   | _, _ -> failwith "todo"
+
+let fresh_var x a ({ gamma; id; _ } as ctx) =
+  let v = Bindlib.new_var (fun v -> Var v) x in
+  v, { ctx with gamma = BVar (v, a) :: gamma; id = (x, v) :: id }
+
+let fresh_vars args ctx =
+  let vars, ctx =
+    List.fold_right (fun (x, t) (vars, ctx) ->
+        Pair.map_fst (fun v -> v :: vars) @@ fresh_var x t ctx)
+      args ([], ctx) in
+  let mvar = Array.of_list vars in
+  mvar, ctx
+
+module VMap = Map.Make(struct
+    type t = var
+    let compare = Bindlib.compare_vars
+  end)
+
+let svar_of_var v =
+  Bindlib.new_var (fun v -> Syntax.Var v) (Bindlib.name_of v)
+
+let rec erase_types env = function
+  | Lit l -> Syntax.Lit l
+  | App (m, n) -> Syntax.App (erase_types env m, erase_types env n)
+  | Do (op, m) -> Syntax.Do (op, erase_types env m)
+  | TLam (_, m) ->
+    let _, m = Bindlib.unbind m in
+    erase_types env m
+  | TApp (m, _) -> erase_types env m
+  | Mod (_, m) -> erase_types env m
+  | Con (c, l) -> Syntax.Con (c, List.map (erase_types env) l)
+  | Mask (l, m) -> Syntax.Mask (l, erase_types env m)
+  | Lam (_, b) ->
+    Syntax.Lam (erase_types_binder env b)
+  | LetMod (_, _, m, n) ->
+    Syntax.Let (erase_types env m, erase_types_binder env n)
+  | Hand (m, _, ret, h) ->
+    let h = List.map (fun (op, b) ->
+        let v, b = Bindlib.unbind b in
+        let v' = svar_of_var v in
+        let b = erase_types_binder (VMap.add v v' env) b in
+        op, Bindlib.(box_binder Syntax.box_expr b |> bind_var v' |> unbox)
+      ) h in
+    Syntax.Hand (erase_types env m, erase_types_binder env ret, h)
+  | Match (_, m, l) ->
+    let l = List.map (fun (p, b) ->
+        let v, m = Bindlib.unmbind b in
+        let v' = Array.map svar_of_var v in
+        let env = Array.fold_left (fun env (v, v') -> VMap.add v v' env) env
+            (Array.combine v v') in
+        p, Bindlib.(erase_types env m |> Syntax.box_expr
+                    |> bind_mvar v' |> unbox)
+      ) l in
+    Syntax.Match (erase_types env m, l)
+  | Var v ->
+    match VMap.find_opt v env with
+    | Some v -> Syntax.Var v
+    | None -> Syntax.FVar (Bindlib.name_of v)
+
+and erase_types_binder env b =
+    let v, m = Bindlib.unbind b in
+    let v' = svar_of_var v in
+    Bindlib.(erase_types (VMap.add v v' env) m |> Syntax.box_expr
+             |> bind_var v' |> unbox)
+
+let erase_types_prog p =
+  List.map (fun (v, m) -> Bindlib.name_of v, erase_types VMap.empty m) p
+
+open Pprint
+open Format
+
+let rec simpl = function
+  | Match (mu, m, [((Syntax.PVar _ | Syntax.PWild), b)]) ->
+    let v, n = Bindlib.unmbind b in
+    let b = Bindlib.(box_expr n |> bind_var v.(0) |> unbox) in
+    simpl (LetMod (Effects.id, mu, m, b))
+  | LetMod (mu, nu, m, b) ->
+    let m = simpl m in
+    let v, n = Bindlib.unbind b in
+    let n = simpl n in
+    let b = Bindlib.(box_expr n |> bind_var v |> unbox) in
+    LetMod (mu, nu, m, b)
+  | Lit _ | Var _ as m -> m
+  | m -> m
+
+let rec expr_let ctx fmt = function
+  | LetMod (mu, nu, m, n) ->
+    let v, n, ctx' = Bindlib.unbind_in ctx n in
+    fprintf fmt "let%a mod%a %s = @[<2>%a@] in@ %a"
+      (modality ctx) mu (modality ctx) nu (Bindlib.name_of v) (expr_let ctx) m
+      (expr_let ctx') n
+  | Mod (mu, m) ->
+    fprintf fmt "mod%a@[<2>@ %a@]" (modality ctx) mu (expr_atom ctx) m
+  | Lam (a, m) ->
+    let v, m, ctx' = Bindlib.unbind_in ctx m in
+    fprintf fmt "@[<2>λ%s : %a .@ %a@]" (Bindlib.name_of v) (ty_arrow ctx) a
+      (expr_let ctx') m
+  | TLam (k, m) ->
+    let v, m, ctx = Bindlib.unbind_in ctx m in
+    fprintf fmt "@[<2>Λ%s : %a.@ %a@]" (Bindlib.name_of v) kind k
+      (expr_let ctx) m
+  | Mask (l, m) ->
+    fprintf fmt "mask<%a> %a" (pp_print_list pp_print_string) l
+      (expr_atom ctx) m
+  | Match (mu, m, l) ->
+    let pp_clause fmt (p, b) =
+      let rec pp_pat l = function
+        | Syntax.PWild -> fprintf fmt "_"; l
+        | Syntax.PVar _ ->
+          fprintf fmt "%s" (Bindlib.name_of (List.hd l));
+          List.tl l
+        | Syntax.PCon (c, p) ->
+          fprintf fmt "%s(" c;
+          let l = List.fold_left (fun l p ->
+              let l = pp_pat l p in
+              fprintf fmt ",@ ";
+              l
+            ) l p
+          in
+          fprintf fmt ")";
+          l
+      in
+      let v, n, ctx = Bindlib.unmbind_in ctx b in
+      let l = Array.to_list v in
+      fprintf fmt "| ";
+      ignore (pp_pat l p);
+      fprintf fmt " -> @[<2> %a@]" (expr_let ctx) n
+    in
+    fprintf fmt "match%a %a with@.%a" (modality ctx) mu (expr_let ctx) m
+      (pp_print_list ~pp_sep:pp_force_newline pp_clause) l
+  | m -> expr_app ctx fmt m
+and expr_app ctx fmt = function
+  | TApp (m, a) ->
+    fprintf fmt "@[<2>%a@ %a@]" (expr_app ctx) m (ty_atom ctx) a
+  | App (m, n) ->
+    fprintf fmt "@[<2>%a@ %a@]" (expr_app ctx) m (expr_atom ctx) n
+  | m -> expr_atom ctx fmt m
+and expr_atom ctx fmt = function
+  | Var v -> fprintf fmt "%s" (Bindlib.name_of v)
+  | Lit (Str s) -> fprintf fmt "\"%s\"" s
+  | Lit (Int n) -> fprintf fmt "%d" n
+  | m -> fprintf fmt "(@[%a@])" (expr_let ctx) m
+
+let pp_expr fmt m =
+  let m = simpl m in
+  expr_let (Bindlib.free_vars (box_expr m)) fmt m

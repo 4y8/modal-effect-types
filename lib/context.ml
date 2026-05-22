@@ -16,7 +16,7 @@ type 'a ctx =
   { gamma : 'a ctx_binding list
   ; effects : (string * eff) list
   ; data : (string * adt) list
-  ; id : (string * var) list
+  ; id : (string * 'a Bindlib.var) list
   ; tid : (string * tvar) list }
 
 let (<:) ({gamma; _} as ctx) b =
@@ -217,18 +217,6 @@ let fresh_tvars args ctx =
   let vars, ctx =
     List.fold_right (fun (x, k) (vars, ctx) ->
         Pair.map_fst (fun v -> v :: vars) @@ fresh_tvar x k ctx)
-      args ([], ctx) in
-  let mvar = Array.of_list vars in
-  mvar, ctx
-
-let fresh_var x a ({gamma; id; _} as ctx) =
-  let v = Bindlib.new_var (fun v -> Var v) x in
-  v, { ctx with gamma = BVar (v, a) :: gamma; id = (x, v) :: id }
-
-let fresh_vars args ctx =
-  let vars, ctx =
-    List.fold_right (fun (x, t) (vars, ctx) ->
-        Pair.map_fst (fun v -> v :: vars) @@ fresh_var x t ctx)
       args ([], ctx) in
   let mvar = Array.of_list vars in
   mvar, ctx

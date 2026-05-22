@@ -3,8 +3,6 @@ let pp_loc _ _ = ()
 
 type kind = Abs | Any | Effect
 
-type htype = Shallow | Deep
-
 type surface_mdesc
   = SMAbs of surface_effect list
   | SMRel of (string * loc) list * surface_effect list
@@ -41,7 +39,7 @@ type surface_desc
   | SLet of string * surface_expr * surface_expr
   | SAppT of surface_expr * surface_type
   | SMask of (string * loc) list * surface_expr
-  | SHand of surface_expr * surface_effect list * surface_mod list * htype *
+  | SHand of surface_expr * surface_effect list * surface_mod list *
              surface_handler
   | SCons of string * surface_expr list
   | SMatch of surface_expr * (surface_pat * surface_expr) list
@@ -71,13 +69,16 @@ let pp_binder _ _ _ _ = ()
 
 type pure_mod
   = MAbs of effect_ctx
-  | MRel of string list * pure_effect list
+  | MRel of string list * effect_ext
 
 and pure_effect
   = { eff_name : string ; eff_args : pure_type array }
 
 and effect_ctx
-  = pure_effect list * (pure_type * string list) option
+  = effect_ext * (pure_type * string list) option
+
+and effect_ext
+  = pure_effect list
 
 and pure_type
   = TArr of pure_type * pure_type
@@ -159,16 +160,16 @@ type expr
   = Do of string * expr
   | Var of var
   | Lit of lit
-  | Lam of pure_type * (expr, expr) Bindlib.binder
+  | Lam of (expr, expr) Bindlib.binder
   | App of expr * expr
-  | Let of expr * pure_type * (expr, expr) Bindlib.binder
+  | Let of expr * (expr, expr) Bindlib.binder
   | Con of string * expr list
   | Mask of string list * expr
-  | Hand of expr * op list * htype *
-            (expr, expr) Bindlib.binder *
+  | Hand of expr * (expr, expr) Bindlib.binder *
             (string * (expr, (expr, expr) Bindlib.binder) Bindlib.binder) list
   | Match of expr * (pat * (expr, expr) Bindlib.mbinder) list
   | Val of value
+  | FVar of string
 
 and pat =
   | PCon of string * pat list
@@ -183,20 +184,20 @@ let var_ = Bindlib.box_var
 
 let lit_ l = Bindlib.box (Lit l)
 
-let lam_ = Bindlib.box_apply2 (fun a m -> Lam (a, m))
+let lam_ = Bindlib.box_apply (fun m -> Lam m)
 
 let app_ = Bindlib.box_apply2 (fun m n -> App (m, n))
 
-let let_ = Bindlib.box_apply3 (fun m a n -> Let (m, a, n))
+let let_ = Bindlib.box_apply2 (fun m n -> Let (m, n))
 
 let con_ c l = Bindlib.box_apply (fun l -> Con (c, l)) (Bindlib.box_list l)
 
 let mask_ l = Bindlib.box_apply (fun m -> Mask (l, m))
 
-let hand_ m d ht ret h =
+let hand_ m ret h =
   let h = List.map (fun (e, b) -> Bindlib.box_apply (fun b -> (e, b)) b) h
        |> Bindlib.box_list in
-  Bindlib.box_apply3 (fun m ret h -> Hand (m, d, ht, ret, h)) m ret h
+  Bindlib.box_apply3 (fun m ret h -> Hand (m, ret, h)) m ret h
 
 let match_ m l =
   Bindlib.box_apply2 (fun m l -> Match (m, l)) m (Bindlib.box_list l)
@@ -215,16 +216,17 @@ let rec box_pat = function
 let rec box_expr = function
   | Do (e, m) -> do_ e (box_expr m)
   | Val v -> Bindlib.box (Val v)
+  | FVar _ as m -> Bindlib.box m
   | Var v -> var_ v
   | Lit l -> lit_ l
-  | Lam (a, m) -> lam_ (box_type a) (Bindlib.box_binder box_expr m)
+  | Lam m -> lam_ (Bindlib.box_binder box_expr m)
   | App (m, n) -> app_ (box_expr m) (box_expr n)
-  | Let (m, a, n) ->
-    let_ (box_expr m) (box_type a) (Bindlib.box_binder box_expr n)
+  | Let (m, n) ->
+    let_ (box_expr m) (Bindlib.box_binder box_expr n)
   | Con (c, l) -> con_ c (List.map box_expr l)
   | Mask (l, m) -> mask_ l (box_expr m)
-  | Hand (m, d, ht, ret, h) ->
-    hand_ (box_expr m) d ht (Bindlib.box_binder box_expr ret)
+  | Hand (m, ret, h) ->
+    hand_ (box_expr m) (Bindlib.box_binder box_expr ret)
       (List.map (fun (e, b) ->
            e, Bindlib.(box_binder (box_binder box_expr) b)) h)
   | Match (m, c) ->

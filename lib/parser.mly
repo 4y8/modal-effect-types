@@ -148,10 +148,6 @@ let handle_clause :=
 let match_clause :=
   | PIPE; ~ = pattern_list; ARROW; ~ = sexpr; <>
 
-let htype :=
-  | { Deep }
-  | BANG; { Shallow }
-
 let atom_expr :=
  | LPAR; ~ = sexpr; RPAR; <>
  | loc_expr(
@@ -164,10 +160,10 @@ let atom_expr :=
      <SMask>
    | UNIT; { SCons ("Unit", []) }
    | HANDLE; LANGLE; d = separated_list (COMMA, seff); RANGLE; mu = smod*;
-     ht = htype; m = sexpr; WITH;
+     m = sexpr; WITH;
      PIPE; RETURN; p = arg; DARROW; n = sexpr;
      h = handle_clause*;
-     END; { SHand (m, d, mu, ht, (h, (p, n))) }
+     END; { SHand (m, d, mu, (h, (p, n))) }
    | MATCH; ~ = sexpr; WITH; ~ = match_clause*; END; <SMatch>)
 
 let single_cons := loc_expr (| c = MIDENT; { SCons (c, []) })

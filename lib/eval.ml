@@ -2,10 +2,7 @@ open Syntax
 open Effect
 open Effect.Deep
 
-module VMap = Map.Make(struct
-    type t = var
-    let compare = Bindlib.compare_vars
-  end)
+module SMap = Map.Make(String)
 
 let rec pp_value fmt = function
   | VClo _ -> Format.fprintf fmt "<fun>"
@@ -48,23 +45,20 @@ let stdlib =
   ; "fail", VClo (fun _ -> raise Fail)
   ; "print", VClo (fun x -> print_endline (unstr x); VCon ("Unit", []))
   ; "string_of_int", VClo (fun x -> VStr (string_of_int (unint x)))
-  ]
-
-let build_stdlib_map ctx =
-  Context.(List.map (fun (x, v) -> List.assoc x ctx.id, v) stdlib
-           |> VMap.of_list)
+  ] |> SMap.of_list
 
 let rec eval ctx = function
   | Val v -> v
   | Lit (Int n) -> VInt n
   | Lit (Str s) -> VStr s
   | Con (c, l) -> VCon (c, List.map (eval ctx) l)
-  | Var x ->
-    begin match VMap.find_opt x !ctx with
+  | FVar x ->
+    begin match SMap.find_opt x !ctx with
       | Some v -> v
       | None -> Error.error_str None "missing a definition"
     end
-  | Lam (_, m) ->
+  | Var _ -> failwith "eval: internal error"
+  | Lam m ->
     VClo (fun v -> eval ctx (Bindlib.subst m (Val v)))
   | App (m, n) ->
     begin match eval ctx m with
@@ -82,7 +76,7 @@ let rec eval ctx = function
         else
         continue k (perform (Do (e, v)))
     end
-  | Let (m, _, n) -> eval ctx (Bindlib.subst n (Val (eval ctx m)))
+  | Let (m, n) -> eval ctx (Bindlib.subst n (Val (eval ctx m)))
   | Match (m, l) ->
     let v = eval ctx m in
       begin match List.find_map (fun (p, n) -> Option.map (fun vals -> vals, n)
@@ -92,8 +86,7 @@ let rec eval ctx = function
       | Some (vals, n) ->
         eval ctx (Bindlib.msubst n (Array.of_list vals))
     end
-  | Hand (m, _, ht, r, h) ->
-    let handled = ref [] in
+  | Hand (m, r, h) ->
     try
       let v = eval ctx m in
       eval ctx (Bindlib.subst r (Val v))
@@ -102,12 +95,9 @@ let rec eval ctx = function
       match List.assoc_opt e h, v with
       | Some _, VMask v
       | None, v -> continue k (perform (Do (e, v)))
-      | Some _, v when ht = Shallow && List.mem e !handled ->
-        continue k (perform (Do (e, v)))
       | Some ni, v ->
         let open Multicont.Deep in
         let k = promote k in
-        handled := e :: !handled;
         eval ctx (Bindlib.(subst (subst ni (Val v)) (Val (VClo (resume k)))))
 
 and eval_pat v vals = function
@@ -126,4 +116,4 @@ and eval_pat v vals = function
 let eval_prog ectx p =
   let first _ x y = match x with None -> y | _ -> x in
   ectx :=
-    VMap.(merge first (of_list (List.map (Pair.map_snd (eval ectx)) p)) !ectx)
+    SMap.(merge first (of_list (List.map (Pair.map_snd (eval ectx)) p)) !ectx)

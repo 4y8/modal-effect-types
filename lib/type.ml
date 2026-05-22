@@ -1,5 +1,6 @@
 open Syntax
 open Context
+open TT
 open Errors
 
 let rec is_val = function
@@ -128,27 +129,6 @@ and check_mask l =
         unknown_eff loc e;
       return e) l
 
-let split_arr loc = function
-  | TArr (a, b) -> a, b
-  | a ->
-    expected_arr loc a
-
-let split_forall loc = function
-  | TForA (k, a) -> k, a
-  | a -> expected_forall loc a
-
-let split_foralls a =
-  let rec aux l = function
-    | TForA (k, b) ->
-      let v, a = Bindlib.unbind b in
-      aux ((v, k) :: l) a
-    | a -> a, l
-  in Pair.map_snd List.rev @@ aux [] a
-
-let split_cons loc = function
-  | TCon (c, l) -> c, l
-  | a -> expected_cons loc a
-
 let ectx_of_type = function
   | ECtx e -> e
   | TVar v -> ([], Some (TVar v, []))
@@ -196,17 +176,31 @@ let join_type loc f t t' =
     | None -> mod_mismatch loc ~expected:mu ~got:nu f
     | Some lam -> return @@ TMod (lam, g)
 
-let rec check ({loc; sexpr} as m) a e =
+let unvar x a m =
+  let mu, _ = get_guarded a in
+  LetMod (Effects.id, mu, Var x, Bindlib.(box_expr m |> bind_var x |> unbox))
+
+let unmod m a =
+  let mu, _ = get_guarded a in
+  let y = Bindlib.new_var (fun y -> Var y) "y" in
+  let lm = LetMod (Effects.id, mu, Var y, Bindlib.(bind_var y (var_ y) |> unbox)) in
+  let lam = Lam (a, Bindlib.(bind_var y (box_expr lm) |> unbox)) in
+  App (lam, m)
+
+let rec check ({ loc; sexpr } as m) a e =
   match sexpr, a with
   (* B-Mod && T-ModAbs *)
   | v, TMod (mu, a) when is_val v || mu = MAbs (([], None)) ->
     with_binding (Lock (mu, e)) @@
-    check m a (Effects.apply_mod mu e)
+      let* m = check m a (Effects.apply_mod mu e) in
+      return (Mod (mu, m))
 
   (* B-Forall *)
   | v, TForA (k, a) when is_val v ->
     let v, a = Bindlib.unbind a in
-    with_binding (BType (v, k)) @@ check m a e
+    with_binding (BType (v, k)) @@
+      let* m = check m a e in
+      return (TLam (k, Bindlib.(box_expr m |> bind_var v |> unbox)))
 
   (* B-Abs *)
   | SLam (x, m), TArr (a, b) ->
@@ -227,7 +221,7 @@ let rec check ({loc; sexpr} as m) a e =
     return @@ Mask (l, m)
 
   (* B-HandlerCheck *)
-  | SHand (m, d, mu, Deep, (l, (x, n))), a ->
+  | SHand (m, d, mu, (l, (x, n))), a ->
     let b = a in (* stay consistent with the paper *)
     let f = e in
     let* mu = M.List.map check_mod mu
@@ -245,9 +239,9 @@ let rec check ({loc; sexpr} as m) a e =
       protect_context @@
       let* ret = fresh_var x (TMod (Effects.compose mu nu, a)) in
       let* n = check n b e in
-      return (ret, n)
+      return (ret, unvar ret (TMod (Effects.compose mu nu, a)) n)
     in
-    let n = Bindlib.(n|> box_expr |> bind_var ret |> unbox) in
+    let n = Bindlib.(n |> box_expr |> bind_var ret |> unbox) in
     let check_clause (li, (loc, pi, ri, ni)) =
       match Effects.get_op li ops with
       | None -> unknown_eff loc li
@@ -256,47 +250,12 @@ let rec check ({loc; sexpr} as m) a e =
         let* pi = fresh_var pi ai in
         let* ri = fresh_var ri (TMod (mu, TArr (bi, b))) in
         let* ni = check ni b e in
+        let ni = unvar pi ai ni in
         return (li, Bindlib.(box_expr ni |> bind_var ri |> bind_var pi
                              |> unbox))
     in
     let* l = M.List.map check_clause l in
-    return @@ Hand (m, ops, Deep, n, l)
-
-  (* B-HandlerCheck *)
-  | SHand (m, d, mu, Shallow, (l, (x, n))), a ->
-    let b = a in (* stay consistent with the paper *)
-    let f = e in
-    let* mu = M.List.map check_mod mu
-      $> List.fold_left Effects.compose Effects.id in
-    if not Effects.(sub_mod mu id f) then
-      no_unboxing loc mu f;
-    let e = Effects.apply_mod mu f in
-    let* d = check_effect_ext d in
-    let* ops = unfold_ext d in
-    let nu = Effects.compose mu (MRel ([], d)) in
-    let* m, a = with_binding (Lock (nu, e)) @@
-      infer m (Effects.extend d e) in
-    let* ret, n =
-      protect_context @@
-      let* ret = fresh_var x (TMod (nu, a)) in
-      let* n = check n b e in
-      return (ret, n)
-    in
-    let n = Bindlib.(n|> box_expr |> bind_var ret |> unbox) in
-    let check_clause (li, (loc, pi, ri, ni)) =
-      match Effects.get_op li ops with
-      | None -> unknown_eff loc li
-      | Some (ai, bi) ->
-
-        protect_context @@
-        let* pi = fresh_var pi ai in
-        let* ri = fresh_var ri (TMod (nu, TArr (bi, b))) in
-        let* ni = check ni b e in
-        return (li, Bindlib.(box_expr ni |> bind_var ri |> bind_var pi
-                             |> unbox))
-    in
-    let* l = M.List.map check_clause l in
-    return @@ Hand (m, ops, Shallow, n, l)
+    return @@ Hand (m, d, n, l)
 
   (* B-CrispSumCheck and B-CrispPairCheck *)
   | SMatch (v, l), a ->
@@ -308,15 +267,21 @@ let rec check ({loc; sexpr} as m) a e =
           let mvar = Array.of_list vars in
           let* n = check n a e in
           return (p, Bindlib.(n |> box_expr |> bind_mvar mvar |> unbox))) l
-    in return @@ Match (m, l)
+    in
+    let mu, _ = get_guarded b in
+    let dummy = Bindlib.new_var (fun v -> Var v) "x" in
+    return @@
+    LetMod (Effects.id, mu, m,
+            Bindlib.(box_expr (Match (mu, Var dummy, l))
+                     |> bind_var dummy |> unbox))
 
   | SSeq (m, n), a ->
     let* m = check m (TCon ("unit", [||])) e in
     let dummy = Bindlib.new_var (fun v -> Var v) "unit" in
     let* n = check n a e in
     return @@
-    Let (m, TCon ("unit", [||]),
-         Bindlib.(n |> box_expr |> bind_var dummy |> unbox))
+    LetMod (Effects.id, Effects.id, m,
+            Bindlib.(box_expr n |> bind_var dummy |> unbox))
 
   | SCons (c, l), a ->
     let tc, tl = split_cons loc a in
@@ -337,26 +302,32 @@ let rec check ({loc; sexpr} as m) a e =
     let* v = fresh_var x b in
     let* n = check n a e in
     return @@
-    Let (m, b, Bindlib.(n |> box_expr |> bind_var v |> unbox))
+    LetMod (Effects.id, Effects.id, m,
+            Bindlib.(box_expr n |> bind_var v |> unbox))
 
   (* B-Switch *)
   | _ ->
     let* m, b = infer m e in
     let mu, g = get_guarded b in
     let nu, g' = get_guarded a in
+    let dummy = Bindlib.new_var (fun v -> Var v) "x" in
     if not Effects.(eq_ty g g') then type_mismatch loc ~expected:g' ~got:g
     else
-      if not (Effects.sub_mod mu nu e) then begin
-        unless (is_abs g) (fun () ->
-            mod_mismatch loc ~got:mu ~expected:nu e) >>
-        return m
-      end
-      else
-        return m
+      let* m =
+        if not (Effects.sub_mod mu nu e) then begin
+          unless (is_abs g) (fun () ->
+              mod_mismatch loc ~got:mu ~expected:nu e) >>
+          return m
+        end
+        else
+          return m
+      in
+      return @@
+      LetMod (Effects.id, mu, m,
+              Bindlib.(var_ dummy |> bind_var dummy |> unbox))
 
-and infer {loc; sexpr} e =
+and infer { loc; sexpr } e =
   match sexpr with
-
   (* B-Var *)
   | SVar x ->
     let* id = lookup_id x in
@@ -368,7 +339,7 @@ and infer {loc; sexpr} e =
         let* a = across a nu f in
         match a with
         | None -> no_access loc x v e
-        | Some a -> return (Var v, a)
+        | Some a -> return (Mod (nu, Var v), a)
     end
 
   (* B-Annotation *)
@@ -405,7 +376,7 @@ and infer {loc; sexpr} e =
     if not Effects.(sub_mod mu id e) then
       no_unboxing loc mu e;
     let* n = check n a e in
-    return (App (m, n), b)
+    return (App (unmod m a, n), b)
 
   (* B-AppT *)
   | SAppT (m, ({tloc; _} as a)) ->
@@ -414,11 +385,11 @@ and infer {loc; sexpr} e =
     let mu, g = get_guarded b in
     if not Effects.(sub_mod mu id e) then
       no_unboxing loc mu e;
-    let k, b = split_forall loc g in
+    let k, b' = split_forall loc g in
     let* k' = get_kind a in
     if not (k' <<< k) then
       kind_mismatch tloc ~expected:k ~got:k' a;
-    return (m, Effects.norm_ty @@ Bindlib.subst b a)
+    return (unmod m b, Effects.norm_ty @@ Bindlib.subst b' a)
 
   (* B-Do *)
   | SDo (l, m) ->
@@ -431,7 +402,7 @@ and infer {loc; sexpr} e =
     return (Do (l, m), b)
 
   (* B-HandlerInfer *)
-  | SHand (m, d, mu, Deep, (l, (x, n))) ->
+  | SHand (m, d, mu, (l, (x, n))) ->
     let f = e in
     let* mu = M.List.map check_mod mu
       $> List.fold_left Effects.compose Effects.id in
@@ -448,9 +419,10 @@ and infer {loc; sexpr} e =
       protect_context @@
       let* ret = fresh_var x (TMod (Effects.compose mu nu, a)) in
       let* n, b' = infer n e in
+      let n = unvar ret (TMod (Effects.compose mu nu, a)) n in
       return (ret, n, b')
     in
-    let n = Bindlib.(n|> box_expr |> bind_var ret |> unbox) in
+    let n = Bindlib.(box_expr n |> bind_var ret |> unbox) in
 
     let infer_clause (li, (loc, pi, ri, ni)) =
       match Effects.get_op li ops with
@@ -460,12 +432,14 @@ and infer {loc; sexpr} e =
         let* pi = fresh_var pi ai in
         let* ri = fresh_var ri (TMod (mu, TArr (bi, b'))) in
         let* ni, bi = infer ni e in
+        let ni = unvar pi ai ni in
         return ((li, Bindlib.(box_expr ni |> bind_var ri |> bind_var pi
                              |> unbox)), bi)
     in
     let* h, bi = M.List.map infer_clause l $> List.split in
     let* b = M.List.fold_left (join_type loc e) b' bi in
-    return (Hand (m, ops, Deep, n, h), b)
+    return (Hand (m, d, n, h), b)
+
   | SInt n -> return (Lit (Int n), TCon ("int", [||]))
   | SStr s -> return (Lit (Str s), TCon ("string", [||]))
 
@@ -474,6 +448,7 @@ and infer {loc; sexpr} e =
     if not (is_val v.sexpr) then
       expected_val v.loc v;
     let* m, a = infer v e in
+    let mu, _ = get_guarded a in
     let* c, types = M.List.map (fun (p, n) ->
         protect_context @@
         let* vars, p = split_pat [] Effects.id a p in
@@ -482,22 +457,28 @@ and infer {loc; sexpr} e =
         return ((p, Bindlib.(box_expr n |> bind_mvar mvar |> unbox)), a)) l
       $> List.split in
     let hty, tty = List.hd types, List.tl types in
+    let dummy = Bindlib.new_var (fun v -> Var v) "x" in
     let* a = M.List.(fold_left (join_type loc e) (hty) (tty)) in
-    return (Match (m, c), a)
+    return
+      (LetMod (Effects.id, mu, m,
+               Bindlib.(box_expr (Match (mu, Var dummy, c))
+                        |> bind_var dummy |> unbox)), a)
 
   | SSeq (m, n) ->
     let* m = check m (TCon ("unit", [||])) e in
     let dummy = Bindlib.new_var (fun v -> Var v) "unit" in
     let* n, a = infer n e in
-    return (Let (m, TCon ("unit", [||]),
-                 Bindlib.(box_expr n |> bind_var dummy |> unbox)), a)
+    return (LetMod (Effects.id, Effects.id, m,
+                    Bindlib.(box_expr n |> bind_var dummy |> unbox)), a)
   | SLet (x, m, n) ->
     let* m, a = infer m e in
     let* n, b, v = protect_context @@
       let* v = fresh_var x a in
       let* n, b = infer n e in
       return (n, b, v) in
-    return (Let (m, a, Bindlib.(box_expr n |> bind_var v |> unbox)), b)
+    let mu, _ = get_guarded a in
+    return (LetMod (Effects.id, mu, m,
+                    Bindlib.(box_expr n |> bind_var v |> unbox)), b)
 
   | _ ->
     cannot_infer_expr loc

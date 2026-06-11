@@ -20,6 +20,9 @@ let open_file f tctx ectx =
         Error.error_str_lexbuf lb
           (Printf.sprintf "Unexpected token: \"%s\"" (Lexing.lexeme lb)) in
     let p, tctx = check_prog tctx p in
+    if !elab then
+      List.iter (fun (v, m) ->
+        Format.printf "%s: %a@." (Bindlib.name_of v) TT.pp_expr m) p;
     let p = TT.erase_types_prog p in
     Eval.eval_prog ectx p;
     close_in ic;

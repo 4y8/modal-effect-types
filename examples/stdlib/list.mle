@@ -2,23 +2,23 @@ type list a = Nil | Cons of a, list a
 
 type unit = Unit
 
-val map : [](forall a b . (a -> b) -> list a -> list b)
+val map : forall a b . []((a -> b) -> list a -> list b)
 let map f l =
   match l with
   | Nil -> Nil
   | Cons (hd, tl) -> Cons (f hd, map @a @b f tl)
   end
 
-val iter : [](forall a . (a -> unit) -> list a -> unit)
+val iter : forall a . []((a -> unit) -> list a -> unit)
 let iter f l =
   match l with
   | Nil -> ()
   | Cons (hd, tl) -> f hd; iter @a f tl
   end
 
-val append : [](forall a . list a -> list a -> list a)
+val append : forall a . [](list a -> list a -> list a)
 let append l l' =
   match l with
   | Nil -> l'
-  | Cons (hd, tl) -> Cons (l, append @a tl l')
+  | Cons (hd, tl) -> Cons (hd, append @a tl l')
   end

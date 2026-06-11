@@ -23,7 +23,8 @@ and ty_arrow ctx fmt = function
 
 and ty_app ctx fmt = function
   | TCon (c, arr) when Array.length arr > 0 ->
-    fprintf fmt "%s %a" c (pp_print_array ~pp_sep:(fun fmt () -> fprintf fmt " ") (ty_atom ctx)) arr
+    fprintf fmt "%s %a" c
+      (pp_print_array ~pp_sep:(fun fmt () -> fprintf fmt " ") (ty_atom ctx)) arr
   | a -> ty_atom ctx fmt a
 and ty_atom ctx fmt = function
   | TVar v ->

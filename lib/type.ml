@@ -369,13 +369,13 @@ and infer { loc; sexpr } e =
   | SApp (m, n) ->
     let* m, a = infer m e in
     let mu, g = get_guarded a in
-    let a, b = match g with
+    let a', b = match g with
       | TArr (a, b) -> a, b
       | a -> apply_non_arr loc a
     in
     if not Effects.(sub_mod mu id e) then
       no_unboxing loc mu e;
-    let* n = check n a e in
+    let* n = check n a' e in
     return (App (unmod m a, n), b)
 
   (* B-AppT *)

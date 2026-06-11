@@ -334,6 +334,8 @@ and expr_atom ctx fmt = function
   | Var v -> fprintf fmt "%s" (Bindlib.name_of v)
   | Lit (Str s) -> fprintf fmt "\"%s\"" s
   | Lit (Int n) -> fprintf fmt "%d" n
+  | Con (c, []) -> fprintf fmt "%s" c
+  | Con (c, l) -> fprintf fmt "%s(%a)" c (pp_print_list (expr_let ctx)) l
   | m -> fprintf fmt "(@[%a@])" (expr_let ctx) m
 
 let pp_expr fmt m =

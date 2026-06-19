@@ -9,7 +9,7 @@ let append l l' =
   | Cons (hd, tl) -> Cons (hd, append tl l')
   end
 
-eff! state s = get : unit => s | put : s => unit
+eff# state s = get : unit => s | put : s => unit
 
 val state : forall s . [](<state s>{unit} -> <state s>s -> unit)
 let state m =
@@ -42,7 +42,7 @@ let schedule m =
 val full_schedule : [](<ucoop>{unit} -> unit)
 let full_schedule m = state {schedule { mask<state> (m!) }} Nil
 
-eff! coop = fork : {unit} => unit | suspend : unit => unit
+eff# coop = fork : {unit} => unit | suspend : unit => unit
 
 val schedule' : [state (list {unit})](<coop>{unit} -> unit)
 let schedule' m =

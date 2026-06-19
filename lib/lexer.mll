@@ -54,6 +54,7 @@ rule lexer = parse
   | '@' { AT }
   | ";;" { DSCOL }
   | '!' { BANG }
+  | '#' { HASH }
   | '^' { CARET }
   | ('"' ([^ '"' '\\']* as s) '"') { STRING s }
   | "&&" { AND }

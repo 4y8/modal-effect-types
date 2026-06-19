@@ -44,7 +44,7 @@ let stunit = { stype = STCons ("unit", []); tloc = None }
 %token IN END VAL OF OPEN
 %token PLUS MINUS TIMES AND CARET DSCOL
 %token LANGLE RANGLE LSQUARE RSQUARE LCURLY RCURLY LPAR RPAR LFREEZE RFREEZE
-%token COMMA PIPE ARROW DARROW DOT DCOL EQU WILDCARD AT SCOL BANG
+%token COMMA PIPE ARROW DARROW DOT DCOL EQU WILDCARD AT SCOL BANG HASH
 %token UNIT
 
 %left AND
@@ -227,7 +227,7 @@ eff:
 
 acc:
   | { false }
-  | BANG { true }
+  | HASH { true }
 ;
 
 decl_eff:

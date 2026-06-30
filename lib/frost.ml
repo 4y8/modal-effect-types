@@ -431,23 +431,43 @@ and solve_eq_mod mu nu =
 
 let rec solve_sub m p =
   match m, p with
-  | _, (TVar _ as alpha) -> alpha
+  | _, (TVar _ as alpha) ->
+    rule "SolS-Var"; end_rule alpha
   | m, TForA (k, p) ->
+    rule "SolS-ForallL";
     let alpha, p = Bindlib.unbind p in
-    TForA (k, Bindlib.(solve_sub m p |> box_type |> bind_var alpha |> unbox))
-  | m, UGhost p -> UGhost (solve_sub m p)
-  | (Infer | Check (Ghost _)), p -> p
+    let p =
+      TForA (k, Bindlib.(solve_sub m p |> box_type |> bind_var alpha |> unbox))
+    in
+    end_rule p
+  | m, UGhost p ->
+    rule "SolS-UnivGhostL";
+    end_rule (UGhost (solve_sub m p))
+  | (Infer | Check (Ghost _)), p ->
+    rule "SolS-Vacuous";
+    end_rule p
   | Check (TForA (_, b)), a when is_type a ->
+    rule "SolS-ForallR";
     let _, b = Bindlib.unbind b in
-    solve_sub (Check b) a
+    end_rule (solve_sub (Check b) a)
   | Check (TMod (_, b)), a when is_type a ->
-    solve_sub (Check b) a
+    rule "SolS-ModR";
+    end_rule (solve_sub (Check b) a)
   | Check b, p when is_guarded p && is_guarded b -> 
-    solve_eq p b
+    rule "SolS-Check";
+    end_rule (solve_eq p b)
   | Fun (q1, m), TArr (p1, p2) ->
-    TArr (solve_eq p1 q1, solve_sub m p2)
-  | Fun (q1, m), Ghost k -> TArr (q1, solve_sub m (Ghost k))
-  | _, (MFlex _ as alpha) -> alpha
+    rule "SolS-Arrow";
+    end_rule (TArr (solve_eq p1 q1, solve_sub m p2))
+  | Fun (q1, m), Ghost Any ->
+    rule "SolS-GhostLF";
+    end_rule (TArr (q1, solve_sub m (Ghost Any)))
+  | Check b, Ghost _ when is_guarded b ->
+    rule "SolS-GhostL";
+    end_rule b
+  | _, (MFlex _ as alpha) ->
+    rule "SolS-Flex";
+    end_rule alpha
   | _, p ->
     raise (UnifyError (p, sk_of_mode m, []))
 

@@ -125,6 +125,20 @@ let end_rule x =
   decr level;
   x
 
+let protect_context f = fun ctx ->
+  let rec drop_marker = function
+    | [] -> failwith "drop_marker: internal error"
+    | Marker :: tl -> tl
+    | BMFlex _ as b :: tl -> b :: drop_marker tl
+    | _  :: tl -> drop_marker tl
+  in
+  let id = ctx.id in
+  let tid = ctx.tid in
+  let ctx = ctx <: Marker in
+  let a, ctx = f ctx in
+  a, { ctx with gamma = drop_marker ctx.gamma; id; tid }
+
+(* we do not need Delta as the variables we unbind cannot appear in p *)
 let rec join_sk p0 p theta ctx =
   let ctx = { ctx with gamma = theta } in
   match p0, p with
@@ -382,30 +396,68 @@ type sup = Ty | Sk
 let rec solve_eq p q =
   match p, q with
   | TCon (c, a), TCon (c', a') when c = c' ->
-    TCon (c, Array.map2 solve_eq a a')
-  | TVar alpha, _ -> TVar alpha
-  | Ghost, q -> q
-  | p, Ghost -> p
-  | TArr (p1, p2), TArr (q1, q2) -> TArr (solve_eq p1 q1, solve_eq p2 q2)
+    rule "SolE-Con";
+    end_rule (TCon (c, Array.map2 solve_eq a a'))
+  | TVar alpha, _ ->
+    rule "SolE-Var";
+    end_rule (TVar alpha)
+  | Ghost, q ->
+    rule "SolE-GhostL";
+    end_rule q
+  | p, Ghost ->
+    rule "SolE-Vacuous";
+    end_rule p
+  | TArr (p1, p2), TArr (q1, q2) ->
+    rule "SolE-Arrow";
+    end_rule (TArr (solve_eq p1 q1, solve_eq p2 q2))
   | TForA (k, p), TForA (k', q) when k = k' ->
+    rule "SolE-Forall";
     let alpha, p, q = Bindlib.unbind2 p q in
-    TForA (k, Bindlib.(solve_eq p q |> box_type |> bind_var alpha |> unbox))
-  | UGhost p, UGhost q -> UGhost (solve_eq p q)
+    let p =
+      TForA (k, Bindlib.(solve_eq p q |> box_type |> bind_var alpha |> unbox))
+    in
+    end_rule p
+  | UGhost p, UGhost q ->
+    rule "SolE-UnivGhost";
+    end_rule (UGhost (solve_eq p q))
   | UGhost _ as p, TForA (k, q) ->
+    rule "SolE-GhostForall";
     let alpha, q = Bindlib.unbind q in
-    TForA (k, Bindlib.(solve_eq p q |> box_type |> bind_var alpha |> unbox))
+    let p =
+      TForA (k, Bindlib.(solve_eq p q |> box_type |> bind_var alpha |> unbox))
+    in
+    end_rule p
   | TForA (k, p), (UGhost _ as q) ->
+    rule "SolE-ForallGhost";
     let alpha, p = Bindlib.unbind p in
-    TForA (k, Bindlib.(solve_eq p q |> box_type |> bind_var alpha |> unbox))
+    let p =
+      TForA (k, Bindlib.(solve_eq p q |> box_type |> bind_var alpha |> unbox))
+    in
+    end_rule p
   | TMod (mu, p), TMod (nu, q) ->
+    rule "SolE-Mod";
     begin match solve_eq_mod mu nu with
       | None -> raise (UnifyError (TMod (mu, p), TMod (nu, q), []))
-      | Some mu -> TMod (mu, solve_eq p q)
+      | Some mu -> end_rule (TMod (mu, solve_eq p q))
     end
-  | TMod (mu, p), (UGhost _ as q) -> TMod (mu, solve_eq p q)
-  | (UGhost _ as p), TMod (mu, q) -> TMod (mu, solve_eq p q)
-  | UGhost p, q | q, UGhost p when is_guarded q -> solve_eq p q
-  | MFlex _ as alpha, _ | _, (MFlex _ as alpha) -> alpha
+  | TMod (mu, p), (UGhost _ as q) ->
+    rule "SolE-ModGhost";
+    end_rule (TMod (mu, solve_eq p q))
+  | (UGhost _ as p), TMod (mu, q) ->
+    rule "SolE-GhostMod";
+    end_rule (TMod (mu, solve_eq p q))
+  | UGhost p, q when is_guarded q ->
+    rule "SolE-GhostGuarded";
+    end_rule (solve_eq p q)
+  | p, UGhost q when is_guarded p ->
+    rule "SolE-GuardedGhost";
+    end_rule (solve_eq p q)
+  | MFlex _ as alpha, _ ->
+    rule "SolE-FlexL";
+    end_rule alpha
+  | _, (MFlex _ as alpha) ->
+    rule "SolE-FlexR";
+    end_rule alpha
   | p, q -> raise (UnifyError (p, q, []))
 
 and solve_eq_mod mu nu =
@@ -491,24 +543,24 @@ let rec refresh_ h p =
       { e with eff_args = Array.map (refresh_ h) eff_args}) in
   match p with
   | TArr (p, q) -> TArr (refresh_ h p, refresh_ h q)
-    | TCon (c, a) -> TCon (c, Array.map (refresh_ h) a)
-    | Ghost -> Ghost
-    | UGhost p -> UGhost (refresh_ h p)
-    | TForA (k, p) ->
-      let v, p = Bindlib.unbind p in
-      TForA (k, Bindlib.(refresh_ h p |> box_type |> bind_var v |> unbox))
-    | TMod (MAbs d, p) -> TMod (MAbs (ext d), refresh_ h p)
-    | TMod (MRel (l, d), p) -> TMod (MRel (l, ext d), refresh_ h p)
-    | TVar _ as alpha -> alpha
-    | MFlex alpha ->
-      match H.find_opt h alpha with
-      | Some beta -> MFlex beta
-      | None ->
-        incr counter;
-        let beta = Bindlib.new_var (fun v -> MFlex v)
-            (Printf.sprintf "β%d" !counter) in
-        H.add h alpha beta;
-        MFlex beta
+  | TCon (c, a) -> TCon (c, Array.map (refresh_ h) a)
+  | Ghost -> Ghost
+  | UGhost p -> UGhost (refresh_ h p)
+  | TForA (k, p) ->
+    let v, p = Bindlib.unbind p in
+    TForA (k, Bindlib.(refresh_ h p |> box_type |> bind_var v |> unbox))
+  | TMod (MAbs d, p) -> TMod (MAbs (ext d), refresh_ h p)
+  | TMod (MRel (l, d), p) -> TMod (MRel (l, ext d), refresh_ h p)
+  | TVar _ as alpha -> alpha
+  | MFlex alpha ->
+    match H.find_opt h alpha with
+    | Some beta -> MFlex beta
+    | None ->
+      incr counter;
+      let beta = Bindlib.new_var (fun v -> MFlex v)
+          (Printf.sprintf "β%d" !counter) in
+      H.add h alpha beta;
+      MFlex beta
 
 let refresh p =
   let h = H.create 63 in

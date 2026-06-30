@@ -261,7 +261,7 @@ let rec get_kind ?(seen_adt=[]) = function
   | TMod (MAbs _, _) -> return Abs
   | TMod (MRel _, a) -> get_kind ~seen_adt a
   | TArr (_, _) -> return Any
-  | Ghost k -> return k
+  | Ghost -> failwith "get_kind: internal error"
   | MFlex v
   | TVar v -> get_var_kind v
   | UGhost p -> get_kind p

@@ -76,7 +76,7 @@ and pure_type
   (* use arrays to use Bindlib's mbinders *)
   | TCon of string * pure_type array
   | TForA of kind * (pure_type, pure_type) Bindlib.binder
-  | Ghost of kind
+  | Ghost
   | UGhost of pure_type
   | MFlex of tvar
 
@@ -110,7 +110,7 @@ let rec box_type = function
   | TArr (a, b) -> tarr_ (box_type a) (box_type b)
   | TCon (c, l) -> tcon_ c (Array.map box_type l)
   | TForA (k, a) -> tfora_ k (Bindlib.box_binder box_type a)
-  | Ghost k -> Bindlib.box (Ghost k)
+  | Ghost -> Bindlib.box Ghost
   | UGhost p -> ughost_ (box_type p)
   | MFlex v -> mflex_ v
 

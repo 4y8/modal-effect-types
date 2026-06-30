@@ -3,7 +3,7 @@ type unit = Unit
 type bool = True | False
 type pair a b = Pair of a, b
 
-eff! gen a = yield : a => unit
+eff# gen a = yield : a => unit
 
 -- inspired by C1b
 let infer1 (f : (forall a . <gen a>{ unit } -> a)) =

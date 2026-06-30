@@ -79,7 +79,6 @@ and pure_type
   | Ghost of kind
   | UGhost of pure_type
   | MFlex of tvar
-  | PFlex of tvar
 
 and tvar = pure_type Bindlib.var
 
@@ -114,7 +113,6 @@ let rec box_type = function
   | Ghost k -> Bindlib.box (Ghost k)
   | UGhost p -> ughost_ (box_type p)
   | MFlex v -> mflex_ v
-  | PFlex v -> pflex_ v
 
 and box_effect_ext d =
   let pure_effect_ eff_name args eff_ho = Bindlib.box_apply

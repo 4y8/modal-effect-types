@@ -33,8 +33,6 @@ and ty_atom ctx fmt = function
     fprintf fmt "%s" (Bindlib.name_of v)
   | MFlex v ->
     fprintf fmt "ˆ%s" (Bindlib.name_of v)
-  | PFlex v ->
-    fprintf fmt "ˇ%s" (Bindlib.name_of v)
   | TCon (c, [||]) ->
     fprintf fmt "%s" c
   | TMod (mu, a) ->
@@ -82,8 +80,6 @@ let bind fmt = function
     fprintf fmt "^%s : %a = %a" (Bindlib.name_of v) kind k ty a
   | Lock (nu, _) ->
     fprintf fmt "🔒 %a" mu nu
-  | BPFlex (v, a) ->
-    fprintf fmt "ˇ%s = %a" (Bindlib.name_of v) ty a
 
 let context fmt gamma =
   pp_print_list ~pp_sep:(fun fmt () -> fprintf fmt ",@ ") bind fmt gamma

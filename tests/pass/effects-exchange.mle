@@ -2,7 +2,7 @@ type unit = Unit
 
 eff e1 = o1 : unit => unit
 eff e2 = o2 : unit => unit
-eff! e3 = o3 : unit => unit
+eff# e3 = o3 : unit => unit
 
 val id1 : []([e1, e2]{unit} -> [e2, e1]{unit})
 let id1 f = f

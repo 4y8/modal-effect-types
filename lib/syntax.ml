@@ -3,6 +3,9 @@ let pp_loc _ _ = ()
 
 type kind = Abs | Any
 
+let (<<<) k k' =
+  k = k' || (k = Abs && k' = Any)
+
 type surface_mdesc
   = SMAbs of surface_effect list
   | SMRel of (string * loc) list * surface_effect list

@@ -10,9 +10,6 @@ let rec is_val = function
   | SCons (_, l) -> List.for_all (fun {sexpr; _} -> is_val sexpr) l
   | _ -> false
 
-let (<<<) k k' =
-  k = k' || (k = Abs && k' = Any)
-
 let is_mod = function TMod _ -> true | _ -> false
 
 let is_forall = function TForA _ -> true | _ -> false

@@ -166,7 +166,9 @@ let rec join_sk p0 p theta ctx =
   (* U-Flex *)
   | MFlex beta , MFlex alpha ->
     rule "U-Flex";
-    let theta = join_var alpha beta theta ctx in
+    let k = get_var_kind_ alpha theta in
+    let k' = get_var_kind_ beta theta in
+    let theta = join_var alpha k beta k' theta ctx in
     end_rule (MFlex alpha, theta)
 
   (* U-FlexR *)
@@ -293,7 +295,7 @@ and join_sk_mod mu nu theta ctx =
   | _, _ -> None
 (* END NEW *)
 
-and join_var alpha beta theta ctx =
+and join_var alpha k beta k' theta ctx =
   match theta with
   (* U-Flex-Flex-Id *)
   | theta when Bindlib.eq_vars alpha beta && is_in_dom_ alpha theta ->
@@ -301,12 +303,12 @@ and join_var alpha beta theta ctx =
     end_rule theta
 
   (* U-Flex-Flex-L *)
-  | BMFlex (a', None, k) :: theta when Bindlib.eq_vars alpha a' ->
+  | BMFlex (a', None, k) :: theta when Bindlib.eq_vars alpha a' && k' <<< k ->
     rule "U-Flex-Flex-L"; end_rule ();
     BMFlex (a', Some (MFlex beta), k) :: theta
 
   (* U-Flex-Flex-R *)
-  | BMFlex (b', None, k) :: theta when Bindlib.eq_vars beta b' ->
+  | BMFlex (b', None, k') :: theta when Bindlib.eq_vars beta b' && k <<< k' ->
     rule "U-Flex-Flex-R"; end_rule ();
     BMFlex (beta, Some (MFlex alpha), k) :: theta
 
@@ -320,13 +322,13 @@ and join_var alpha beta theta ctx =
   (* U-Flex-Flex-Skip *)
   | (BMFlex _ as hd) :: theta ->
     rule "U-Flex-Flex-Skip";
-    let theta = join_var alpha beta theta ctx in
+    let theta = join_var alpha k beta k' theta ctx in
     end_rule (hd :: theta)
 
-  (* U-Flex-Flex-Skip *)
+  (* U-Flex-Flex-Skip' *)
   | ((BVar _ | Marker | BType _ | Lock _) as hd) :: theta ->
-    rule "U-Flex-Flex-Skip";
-    let theta = join_var alpha beta theta ctx in
+    rule "U-Flex-Flex-Skip'";
+    let theta = join_var alpha k beta k' theta ctx in
     end_rule (hd :: theta)
 
   | [] ->
@@ -375,7 +377,7 @@ and assign alpha p xi theta ctx =
     let theta = assign alpha p xi theta ctx in
     end_rule (hd :: theta)
 
-  (* U-Assign-SkipOthers *)
+  (* U-Assign-SkipTmVar *)
   | ((BVar _ | Marker | Lock _) as hd) :: theta ->
     rule "U-Assign-SkipOthers";
     let theta = assign alpha p xi theta ctx in
@@ -515,10 +517,10 @@ let rec solve_sub m p =
     end_rule (TArr (solve_eq p1 q1, solve_sub m p2))
   | Fun (q1, m), Ghost ->
     rule "SolS-GhostLF";
-    end_rule (TArr (q1, solve_sub m Ghost))
+    end_rule (TArr (solve_eq Ghost q1, solve_sub m Ghost))
   | Check b, Ghost when is_guarded b ->
     rule "SolS-GhostL";
-    end_rule b
+    end_rule (UGhost b)
   | _, (MFlex _ as alpha) ->
     rule "SolS-Flex";
     end_rule alpha

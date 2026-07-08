@@ -62,6 +62,14 @@ type surface_top_level
   | TLExpr of surface_expr
   | TLOpen of string
 
+let rec is_val = function
+  | SVar _ -> true
+  | SLam _ -> true
+  | SAnn (m, _)
+  | SAppT (m, _) -> is_val m.sexpr
+  | SCons (_, l) -> List.for_all (fun {sexpr; _} -> is_val sexpr) l
+  | _ -> false
+
 type pure_mod
   = MAbs of effect_ctx
   | MRel of string list * pure_effect list

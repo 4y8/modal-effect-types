@@ -8,7 +8,6 @@ let unsafe_getById id f =
 
 let read_string s =
   let open Syntax in
-  let open Type in
   let open Context in
   let check_decl (p, ctx) = function
     | (x, SDFun m), _ ->
@@ -17,26 +16,26 @@ let read_string s =
           let (_, a, _), _ = get_type_context v ctx in
           let (_, m), _ =
             try
-              Frost.finfer (Check a) m [] ctx
+              Type.finfer (Check a) m [] ctx
             with
-            | Frost.UnifyError (a, b, theta) ->
-              Errors.cannot_unify None (Frost.subst_suffix theta a)
-                (Frost.subst_suffix theta b)
+            | Type.UnifyError (a, b, theta) ->
+              Errors.cannot_unify None (Type.subst_suffix theta a)
+                (Type.subst_suffix theta b)
           in
           (v, m) :: p, ctx
         | None ->
           let (a, m), ctx' = try
-              Frost.finfer Infer m [] ctx
+              Type.finfer Infer m [] ctx
             with
-            | Frost.UnifyError (a, b, theta) ->
-              Errors.cannot_unify None (Frost.subst_suffix theta a)
-                (Frost.subst_suffix theta b)
+            | Type.UnifyError (a, b, theta) ->
+              Errors.cannot_unify None (Type.subst_suffix theta a)
+                (Type.subst_suffix theta b)
           in
-          let a = Frost.subst_suffix ctx'.gamma a in
+          let a = Type.subst_suffix ctx'.gamma a in
           let v, ctx = fresh_var x a ctx in
           (v, m) :: p, ctx
       end
-    | d -> check_decl (p, ctx) d
+    | d -> Type.check_decl (p, ctx) d
   in
   let buf = Buffer.create 4096 in
   let fmt = Format.formatter_of_buffer buf in
@@ -51,15 +50,16 @@ let read_string s =
         Parser.Error ->
         Error.error_str_lexbuf lb
           (Printf.sprintf "Unexpected token: \"%s\"" (Lexing.lexeme lb)) in
-    let p, tctx = List.fold_left check_decl ([], init_ctx) p in
+    let p, tctx = List.fold_left check_decl ([], Type.init_ctx) p in
     let p = List.rev p in
-    let ectx = ref (Eval.build_stdlib_map init_ctx) in
+    let ectx = ref (Eval.build_stdlib_map Type.init_ctx) in
     Eval.fmt_out := fmt;
     Eval.eval_prog ectx p;
     List.iter (fun (x, _) ->
       let v = Eval.VMap.find x !ectx in
       let t = get_type_context_ tctx.gamma x |> fun (_, t, _) -> t in
-      Format.fprintf fmt "%s : %a = %a@." (Bindlib.name_of x) Pprint.ty t Eval.pp_value v) p;
+      Format.fprintf fmt "%s : %a = %a@."
+        (Bindlib.name_of x) Pprint.ty t Eval.pp_value v) p;
     Buffer.contents buf
   with
   | Error.Exit -> Buffer.contents buf

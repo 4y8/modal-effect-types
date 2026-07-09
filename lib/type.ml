@@ -207,7 +207,7 @@ let rec join_sk p0 p theta ctx =
 
   (* U-UnivGhost1 *)
   | TForA (k, p0), (UGhost _ as p) ->
-    rule "U-Forall-UnivGhost";
+    rule "U-UnivGhost1";
     let alpha, p0 = Bindlib.unbind p0 in
     let q, theta = join_sk p0 p (BType (alpha, k) :: theta) ctx in
     end_rule ();
@@ -224,7 +224,7 @@ let rec join_sk p0 p theta ctx =
   (* NEW *)
   (* U-ModInh *)
   | TMod (mu, p0), TMod (nu, p) ->
-    rule "U-Mod";
+    rule "U-ModInh";
     let mu', theta = match join_sk_mod mu nu theta ctx with
     | None -> raise (UnifyError (TMod (mu, p0), TMod (nu, p), theta))
     | Some x -> x
@@ -232,15 +232,15 @@ let rec join_sk p0 p theta ctx =
     let q, theta = join_sk p0 p theta ctx in
     end_rule (TMod (mu', q), theta)
 
-  (* U-Mod-UnivGhost3 *)
+  (* U-UnivGhost3 *)
   | TMod (mu, p0), (UGhost _ as p) ->
-    rule "U-Mod-UnivGhost";
+    rule "U-UnivGhost3";
     let q, theta = join_sk p0 p theta ctx in
     end_rule (TMod (mu, q), theta)
     
   (* U-ModSyn *)
   | (UGhost _ as p0), TMod (mu, p) -> 
-    rule "U-UnivGhost-Mod";
+    rule "U-ModSyn";
     let s', theta = join_sk p0 p theta ctx in
     end_rule (TMod (mu, s'), theta)
 
@@ -248,13 +248,13 @@ let rec join_sk p0 p theta ctx =
 
   (* U-UnivGhost2 *)
   | p0, UGhost p when is_guarded p0 && not (is_flex_var p0) ->
-    rule "U-Guarded-UnivGhost";
+    rule "U-UnivGhost2";
     let res = join_sk p0 p theta ctx in
     end_rule res
 
   (* U-UnivGhostR *)
   | UGhost p0, p when is_guarded p && not (is_flex_var p) ->
-    rule "U-UnivGhost-Guarded";
+    rule "U-UnivGhostR";
     let res = join_sk p0 p theta ctx in
     end_rule res
 
@@ -489,7 +489,8 @@ and solve_eq_mod mu nu =
 let rec solve_sub m p =
   match m, p with
   | _, (TVar _ as alpha) ->
-    rule "SolS-Var"; end_rule alpha
+    rule "SolS-Var";
+    end_rule alpha
   | m, TForA (k, p) ->
     rule "SolS-ForallL";
     let alpha, p = Bindlib.unbind p in
@@ -497,6 +498,9 @@ let rec solve_sub m p =
       TForA (k, Bindlib.(solve_sub m p |> box_type |> bind_var alpha |> unbox))
     in
     end_rule p
+  | m, TMod (mu, p) ->
+    rule "SolS-ModL";
+    end_rule (TMod (mu, solve_sub m p))
   | m, UGhost p ->
     rule "SolS-UnivGhostL";
     end_rule (UGhost (solve_sub m p))
@@ -518,7 +522,7 @@ let rec solve_sub m p =
     end_rule (TArr (solve_eq p1 q1, solve_sub m p2))
   | Fun (q1, m), Ghost ->
     rule "SolS-GhostLF";
-    end_rule (TArr (solve_eq Ghost q1, solve_sub m Ghost))
+    end_rule (UGhost (TArr (solve_eq Ghost q1, solve_sub m Ghost)))
   | Check b, Ghost when is_guarded b ->
     rule "SolS-GhostL";
     end_rule (UGhost b)
@@ -535,57 +539,11 @@ let rec constr_solve p = function
   | Sub m -> solve_sub m p
   | Eq (q, c) -> constr_solve (solve_eq p q) c
 
-module H = Hashtbl.Make(struct
-    type t = pure_type Bindlib.var
-    let equal = Bindlib.eq_vars
-    let hash = Bindlib.hash_var
-  end)
-
-let rec refresh_ h p =
-  let ext = List.map (fun ({ eff_args; _ } as e) ->
-      { e with eff_args = Array.map (refresh_ h) eff_args}) in
-  match p with
-  | TArr (p, q) -> TArr (refresh_ h p, refresh_ h q)
-  | TCon (c, a) -> TCon (c, Array.map (refresh_ h) a)
-  | Ghost -> Ghost
-  | UGhost p -> UGhost (refresh_ h p)
-  | TForA (k, p) ->
-    let v, p = Bindlib.unbind p in
-    TForA (k, Bindlib.(refresh_ h p |> box_type |> bind_var v |> unbox))
-  | TMod (MAbs d, p) -> TMod (MAbs (ext d), refresh_ h p)
-  | TMod (MRel (l, d), p) -> TMod (MRel (l, ext d), refresh_ h p)
-  | TVar _ as alpha -> alpha
-  | MFlex alpha ->
-    match H.find_opt h alpha with
-    | Some beta -> MFlex beta
-    | None ->
-      incr counter;
-      let beta = Bindlib.new_var (fun v -> MFlex v)
-          (Printf.sprintf "β%d" !counter) in
-      H.add h alpha beta;
-      MFlex beta
-
-let refresh p =
-  let h = H.create 63 in
-  let p = refresh_ h p in
-  H.to_seq h |> List.of_seq, p
-
-let refresh_mode m = 
-  let h = H.create 63 in
-  let rec refresh_mode = function
-    | Infer -> Infer
-    | Check p -> Check (refresh_ h p)
-    | Fun (p, m) -> Fun (refresh_ h p, refresh_mode m)
-  in
-  let m = refresh_mode m in
-  H.to_seq h |> List.of_seq, m
-
 let rec constr_collect_eq p p' alpha xi c =
   match p, p' with
   | TVar alpha', p when Bindlib.eq_vars alpha alpha' ->
     rule "LE-Var";
-    let xi', p' = refresh p in
-    end_rule (xi' @ xi, Eq (p', c))
+    end_rule (xi, Eq (p, c))
 
   | p, _ when not Bindlib.(occur alpha (box_type p)) ->
     rule "LE-Absent";
@@ -696,8 +654,7 @@ let rec constr_collect_sub m p alpha xi =
 
   | m, TVar alpha' when Bindlib.eq_vars alpha alpha' ->
     rule "LS-Var";
-    let xi', m = refresh_mode m in
-    end_rule (xi' @ xi, Sub m)
+    end_rule (xi, Sub m)
 
   | (Infer | Check Ghost), _ ->
     rule "LS-Vacuous";
@@ -780,6 +737,8 @@ let join_sk loc p0 p ({ gamma; _ } as ctx) =
       join_sk p0 p gamma ctx
     with
     | UnifyError _ ->
+      Errors.type_mismatch loc ~expected:p0 ~got:p
+    | Occurs _ ->
       Errors.type_mismatch loc ~expected:p0 ~got:p
   in
   p', { ctx with gamma }
@@ -958,10 +917,10 @@ let rec sub loc m n p e =
 
   (* SI-Arrow *)
   | Fun (p1', m), n, TArr (p1, p2) ->
-    rule "SI-Arg" >>
+    rule "SI-Arrow" >>(
     let* q1 = join_sk loc p1' p1 in
     let* q2 = sub loc m n p2 e in
-    end_rule (TArr (q1, q2))
+    end_rule (TArr (q1, q2)))
 
   (* NEW *)
   (* SI-Mod *)
@@ -980,7 +939,7 @@ let rec sub loc m n p e =
     end
 
   (* SI-ModFun *)
-  | (Fun _), Ty, (TMod _ as s) -> 
+  | (Fun (p1', _) as m), Ty, (TMod _ as s) -> 
     rule "SI-ModFun-Ty" >>
     let mu, s = get_guarded s in
     unless (sub_mod loc mu Effects.id e)
@@ -1366,7 +1325,8 @@ let rec sk_infer m { sexpr; loc } e = match m, sexpr with
     rule "PI-Con" >>
     let* p = sk_infer mode (app_of_con loc c l) e in
     begin match mode with
-      | Check _ -> end_rule (UGhost p)
+      | Check (UGhost _ as p) -> end_rule p
+      | Check p -> end_rule (UGhost p)
       | _ -> end_rule p
     end
 

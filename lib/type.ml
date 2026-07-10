@@ -338,17 +338,22 @@ and join_var alpha k beta k' theta ctx =
 and assign alpha p xi theta ctx =
   let ctx = { ctx with gamma = theta } in
   match theta with
-  (* U-Assign-SolveM *)
   | BMFlex (a', None, k) :: theta when Bindlib.eq_vars alpha a' ->
-    rule "U-Assign-SolveM";
-    if Bindlib.occur alpha (box_type p) then
-      raise (Occurs (alpha, p));
-    let beta, tau = guess_mono p k (xi @ theta) ctx in
-    if not (is_mono tau) then
-      raise (UnifyError (MFlex alpha, tau, theta));
-    if k = Abs && not (is_abs tau ctx |> fst) then
-      Errors.kind_mismatch None ~expected:Abs ~got:Any tau;
-    end_rule (BMFlex (a', Some tau, k) :: beta)
+    begin match p with
+      | UGhost (MFlex a') when Bindlib.eq_vars alpha a' ->
+        rule "U-Assign-UnivGhost-Id";
+        end_rule ((BMFlex (alpha, None, k)) :: theta)
+      | _ ->
+        rule "U-Assign-SolveM";
+        if Bindlib.occur alpha (box_type p) then
+          raise (Occurs (alpha, p));
+        let beta, tau = guess_mono p k (xi @ theta) ctx in
+        if not (is_mono tau) then
+          raise (UnifyError (MFlex alpha, tau, theta));
+        if k = Abs && not (is_abs tau ctx |> fst) then
+          Errors.kind_mismatch None ~expected:Abs ~got:Any tau;
+        end_rule (BMFlex (a', Some tau, k) :: beta)
+    end
 
   (* U-Assign-Assign *)
   | (BMFlex (beta, Some tau, _) as hd) :: theta ->
@@ -939,7 +944,7 @@ let rec sub loc m n p e =
     end
 
   (* SI-ModFun *)
-  | (Fun (p1', _) as m), Ty, (TMod _ as s) -> 
+  | (Fun _ as m), Ty, (TMod _ as s) -> 
     rule "SI-ModFun-Ty" >>
     let mu, s = get_guarded s in
     unless (sub_mod loc mu Effects.id e)

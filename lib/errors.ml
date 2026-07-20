@@ -2,7 +2,6 @@ open Error
 open Pprint
 open Format
 open Context
-open Syntax
 
 let text fmt = Fun.compose (fprintf fmt) format_text
 
@@ -56,77 +55,13 @@ prefixed by a forall as it is applied to a type_mismatch"
 let expected_val loc _ =
   error_str loc "Expected a value"
 
-exception End
-
-let rec sub_eff fmt d d' =
-  match d with
-  | [] -> ()
-  | { eff_args; eff_name; eff_ho } :: tl ->
-    match Effects.find_label_eff eff_name d' eff_ho with
-    | None ->
-      text fmt "effect %s appears more times in the wrong side" eff_name;
-      raise End
-    | Some ({ eff_args = eff_args'; _ }, d') ->
-      Array.iter2
-        (fun a b ->
-           if not Effects.(eq_ty a b) then begin
-             text fmt "argument of effect %s do not match: %a on the one hand and %a on the other"
-               eff_name ty a ty b;
-             raise End
-           end
-        ) eff_args eff_args';
-      sub_eff fmt tl d'
-
-let sub_eff_ctx fmt e e' =
-  sub_eff fmt e e'
-
-let rec extract fmt d l = match d with
-  | [] -> if l <> [] then
-      (text fmt "effect %s is not present" (List.hd l); raise End)
-  | hd :: tl -> match Effects.find_label_mask hd.eff_name l with
-    | None -> extract fmt tl l
-    | Some l -> extract fmt tl l
-
-(* to fix *)
-let sub_mod fmt mu nu f = match mu, nu with
-  | MAbs e, _ ->
-    text fmt "%a should be a sub context of %a but "
-      ectx e ectx Effects.(apply_mod nu f);
-    sub_eff_ctx fmt e Effects.(apply_mod nu f)
-  | MRel (l1, d1), MRel (l2, d2) ->
-    let l, d = Effects.(l1 >< d1) in
-    let l', d' = Effects.(l2 >< d2) in
-    begin match Effects.mask_diff l l' with
-    | [] -> ()
-    | l ->
-      text fmt "labels %a are removed by a side but not the other" mask l;
-      raise End
-    end;
-    begin match Effects.mask_diff l' l with
-    | [] -> ()
-    | l ->
-      text fmt "labels %a are removed by a side but not the other" mask l;
-      raise End
-    end;
-    sub_eff fmt d d';
-    sub_eff fmt d' d;
-    text fmt
-      "each label present in only one of the masks should be present in the ambiant context %a but " ectx f;
-    extract fmt f Effects.(mask_diff l1 l2);
-    extract fmt f Effects.(mask_diff l2 l1);
-  | MRel _, MAbs _ ->
-    text fmt
-      "a relative modality cannot be a submodality of an absolute modality"
-
 let mod_mismatch loc ~expected ~got e =
   error loc
     (fun fmt ->
        text fmt "Modality mismatch: this expression has top-level \
 modality %a but expected an expression with modality %a; the former \
-is not a submodality of the latter at context %a because "
-         mu got mu expected ectx e;
-       try sub_mod fmt got expected e
-       with End -> ())
+is not a submodality of the latter at context %a "
+         mu got mu expected ectx e)
 
 let missing_declaration loc x =
   error loc (fun fmt -> text fmt "Missing declaration for function %s" x)
@@ -146,35 +81,19 @@ let no_apply_abs loc _ = error_str loc
 let no_apply_type loc _ = error_str loc
     "Cannot apply to a value of type todo"
 
-let right_residual fmt mu nu f =
-  match mu, nu with
-  | MAbs _, _ ->
-    text fmt "the variable is protected by an absolute modality but does not have a pure type";
-    raise End
-  | MRel (l', _), MRel (l, _) ->
-    text fmt "in the context %a of the variable, " ectx f;
-    extract fmt f Effects.(mask_diff l' l)
-  | _, _ -> ()
-
 let no_access loc x v e =
-  let* _, a, gamma' = get_type_context v in
-  let mu, _ = get_guarded a in
-  let nu, f = locks e gamma' in
+  let* _, a, _ = get_type_context v in
   error loc
     (fun fmt ->
        text fmt
-         "Cannot access variable %s of type %a in effect context %a because "
-         x ty a ectx e;
-       try right_residual fmt nu mu f
-       with End -> ())
+         "Cannot access variable %s of type %a in effect context %a"
+         x ty a ectx e)
 
 let no_unboxing loc m e =
   error loc
     (fun fmt -> text fmt
-        "Cannot unbox modality %a in effect context %a; it is not a submodality of identity because "
-        mu m ectx e;
-      try sub_mod fmt m Effects.id e
-      with End -> ())
+        "Cannot unbox modality %a in effect context %a; it is not a submodality of identity"
+        mu m ectx e)
 
 let higher_order_effect_not_first loc op e =
   error loc

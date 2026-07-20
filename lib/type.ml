@@ -723,13 +723,6 @@ let guess_mono p k = fun ({ gamma; _ } as ctx) ->
   let gamma, p = guess_mono p k gamma ctx in
   p, { ctx with gamma }
 
-(* eta expand to avoid value restriction *)
-let guess_mono_suffix l =
-  M.List.map (function
-  | BMFlex (_, None, _) as b ->
-    add_binding b >> return b
-  | b -> return b) l
-
 let rule s = fun ctx ->
   (rule s, ctx)
 
@@ -1329,9 +1322,9 @@ let rec sk_infer m { sexpr; loc } e = match m, sexpr with
   | mode, SCons (c, l) ->
     rule "PI-Con" >>
     let* p = sk_infer mode (app_of_con loc c l) e in
-    begin match mode with
-      | Check (UGhost _ as p) -> end_rule p
-      | Check p -> end_rule (UGhost p)
+    begin match mode, p with
+      | Check _, (UGhost _ as p) -> end_rule p
+      | Check _, p -> end_rule (UGhost p)
       | _ -> end_rule p
     end
 

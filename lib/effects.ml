@@ -82,79 +82,10 @@ let right_residual mu nu f =
 let eq_mask l l' =
   List.sort compare l = List.sort compare l'
 
-let eq_eff_var (eps, l) (eps', l') = match eps, eps' with
-  | TVar v, TVar v' ->
-    Bindlib.eq_vars v v' && eq_mask l l'
-  | _ -> failwith "impossible"
-
-let rec sub_eff d d' =
-  match d with
-  | [] -> true
-  | { eff_args; eff_name; eff_ho } :: tl ->
-    match find_label_eff eff_name d' eff_ho with
-    | None -> false
-    | Some ({ eff_args = eff_args'; _ }, d') ->
-      Array.for_all2 eq_ty eff_args eff_args' && sub_eff tl d'
-
-and eq_ty a b = a == b ||
-  match a, b with
-  | TVar v, TVar v' -> Bindlib.eq_vars v v'
-  | TCon (c, l), TCon (c', l') ->
-    c = c' && Array.for_all2 eq_ty l l'
-  | TArr (a, b), TArr (a', b') -> eq_ty a a' && eq_ty b b'
-  | TMod (m, a), TMod (m', a') -> eq_mod m m' && eq_ty a a'
-  | TForA (k, b), TForA (k', b') -> k = k' && Bindlib.eq_binder eq_ty b b'
-  | _, _ -> false
-
-and eq_mod m m' = match m, m' with
-  | MAbs e, MAbs e' -> e === e'
-  | MRel (l, d), MRel (l', d') -> eq_mask l l' && d === d'
-  | _, _ -> false
-
-and (===) d d' = sub_eff d d' && sub_eff d' d
-
-let sub_ectx e e' =
-  sub_eff e e'
-
-let sub_mod mu nu f = match mu, nu with
-  | MAbs e, _ ->
-    sub_ectx e (apply_mod nu f)
-  | MRel (l1, d1), MRel (l2, d2) ->
-    let g = apply_mod mu f in
-    let g' = apply_mod nu f in
-    let l, _ = l1 >< d1 in
-    let l', _ = l2 >< d2 in
-    sub_ectx g g' && sub_ectx g' g &&
-    eq_mask l l'
-  | _, _ -> false
-
 let rec get_op l = function
   | [] -> None
   | { op_name; op_in; op_out } :: _ when op_name = l -> Some (op_in, op_out)
   | _ :: tl -> get_op l tl
-
-let rec join_eff_ext d d' = match d with
-  | [] -> Some d'
-  | { eff_name; eff_args; eff_ho } as hd :: d ->
-    match find_label_eff eff_name d' eff_ho with
-    | None -> Option.map (fun e -> hd :: e) (join_eff_ext d d')
-    | Some ({ eff_args = eff_args'; _ }, d') when
-        Array.for_all2 eq_ty eff_args eff_args' ->
-      Option.map (fun e -> hd :: e) (join_eff_ext d d')
-    | _ -> None
-
-let join_eff_ctx =
-  join_eff_ext
-
-let rec meet_eff e e' = match e with
-  | [] -> Some []
-  | { eff_name; eff_args; eff_ho } as hd :: e ->
-    match find_label_eff eff_name e' eff_ho with
-    | None -> meet_eff e e'
-    | Some ({ eff_args = eff_args'; _ }, e') when
-        Array.for_all2 eq_ty eff_args eff_args' ->
-      Option.map (fun e -> hd :: e) (meet_eff e e')
-    | _ -> None
 
 let meet_mask l l' =
   let l = List.sort compare l in
@@ -167,18 +98,3 @@ let meet_mask l l' =
       else if hd < hd' then aux tl l'
       else aux l tl'
   in aux l l'
-
-let join_mod m m' f = match m, m' with
-  | MAbs e, MAbs e' -> Option.map (fun e -> MAbs e) (join_eff_ctx e e')
-  | MAbs e, MRel (l, d) | MRel (l, d), MAbs e ->
-    if sub_ectx e (extend d (remove_labels f l))
-    then Some (MRel (l, d))
-    else None
-  | MRel (l, d), MRel (l', d') ->
-    match meet_eff d d' with
-    | None -> None
-    | Some d'' ->
-      let mu = MRel (meet_mask l l', d'') in
-      if sub_mod m mu f && sub_mod m' mu f then
-        Some mu
-      else None

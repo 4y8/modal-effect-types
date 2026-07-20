@@ -1,51 +1,43 @@
-# A Modal Effect Types implementation
-
-An implementation of a functionnal progamming language with effect handlers
-tracked by a modal effect type system as described in the papers: Tang, Wenhao,
-et al. "Modal effect types." Proceedings of the ACM on Programming Languages
-9.OOPSLA1 (2025): 1130-1157. and Tang, Wenhao, and Sam Lindley. "Rows and
-Capabilities as Modal Effects." Proceedings of the ACM on Programming Languages
-10.POPL (2026): 923-950. The language has polymorphism with type inference.
-
-This program type checks and interprets source programs.
+An implementation of an ML-like language based on modal effect types and Fresco
+type inference.
 
 ## Building
-This project uses the `dune` build system; you can build it with:
-
-``` sh
+This interpreter is written in OCaml and uses the dune build system. It uses the
+`menhir`, `bindlib`, and `multicont` libraries. To build a binary you can then
+run:
+```sh
+opam install menhir bindlib multicont
 dune build bin/met.exe
 ```
 
-## Using
-The previous step produces an executable `bin/met.exe`. Running it without any
-argument spawns a REPL, and giving it a file name typechecks it. The program
-does not interpret input files by default, to do give it the flag `--eval`, in
-which case the source file should contain a function `main` of type `unit ->
-unit`.
+The following command spawns a REPL accepting definitions and expressions
+terminated by `;;`:
+```sh
+dune exec bin/met.exe
+```
+You can use it with `rlwrap` to have navigation and history:
+```
+rlwrap -- dune exec bin/met.exe
+```
+The type checker can take a file as input:
+```sh
+dune exec -- bin/met.exe <file>
+```
+The `--eval` flag, which has to be put before the file's name, runs the
+interpreter on the file. This flags expects a `main` function in the file.
 
-The REPL takes as input valid declarations and expressions followed by two
-semicolons and file inclusion with the syntax `open "<file>";;`.
+The `--debug` flag prints a tree of the typing rules used for the input file.
 
 ## Examples
-Standard functions on lists:
+We can define a `gen` parametric effect and use it as follows with the `iter`
+function.
 ```
-val iter : forall a . []((a -> unit) -> list a -> unit)
-let iter f l =
-  match l with
-  | Nil -> ()
-  | Cons (hd, tl) -> f hd; iter f tl
-  end
+type unit = Unit
+type list a = Nil | Cons of a, list a
+type option a = None | Some of a
+type bool = True | False
 
-let append l l' =
-  match l with
-  | Nil -> l'
-  | Cons (hd, tl) -> Cons (hd, append tl l')
-  end
-```
-
-Declaring and handling an effect:
-```
-eff gen a = yield : a => unit
+eff gen [a] = yield : a => unit
 
 val as_list : [](<gen int>(unit -> unit) -> list int)
 let as_list f =
@@ -53,28 +45,48 @@ let as_list f =
   | return u => Nil
   | yield x r => Cons (x, r ())
   end
+
+val iter : forall a . []((a -> unit) -> list a -> unit)
+let iter f l =
+  match l with
+  | Nil -> ()
+  | Cons (hd, tl) -> f hd; iter f tl
+  end
+
+val find : forall [a] . []((a -> bool) -> list a -> option a)
+let find p xs =
+  handle (iter (fun x -> if mask<gen> (p x) then do yield x else ()) xs) with
+  | return _ => None
+  | yield x k => Some (x)
+  end
 ```
 
-The directory `examples/` contains more examples.
+The `tests/pass` directory contains more examples such as a fragment of a Unix
+interface (`unix.mle`) or an elaboration algorithm for a dependently-typed
+language (`faux-tt.mle`). 
 
-## Demo
-The `demo/ directory contains a longer example: `faux-tt.mle`. It is an elaborator
-for a dependently-typed language with holes. This implementation follows [Andrej
-Bauer's
-faux-type-theory](https://github.com/andrejbauer/faux-type-theory/tree/main/algebraic-fauxtt)
-in its use of effects to handle (meta-)variables.
+## Overview
+The `lib` directory contains the core of the language and it contains the
+following file:
++ `lexer.mll` implements a lexer
++ `parser.mly` implements a parser
++ `syntax.ml` defines the syntax of the language
++ `context.ml` defines contexts and implements context manipulation
++ `effects.ml` implements basic functions on effects
++ `type.ml` implements type checking
++ `eval.ml` implements an interpreter for the language
++ `pprint.ml` implements pretty printing of types
++ `error.ml` and `errors.ml` implement error messages
 
-This type checker can be tested by running `dune exec -- demo/repl.exe
-demo/faux-tt.mle` which spawns a REPL implemented in OCaml that parses terms
-written with the following syntax (followed by `;;`) and gives them to the type
-checker implemented by `faux-tt.mle`.
-
-```
-M,N ::= x (variable)
-     |  M N (application)
-     | fun x => M (abstraction)
-     | fun (x : M) => N (abstraction)
-     | (x : M) -> N (dependent product)
-     | * (type of types, with have type in type)
-     | (M @ N) (type ascription)
-```
+### Mapping functions to judgements
+We map important functions in `type.ml` to the corresponding judgements in the
+paper.
++ `finfer` implements type inference
++ `sk_infer` implements skeleton inference
++ `join_sk`, `join_var`, and `assign` implement consistency
++ `sub` and `sub_flex` implement subtyping
++ `look` implements looking
++ `constr_collect_sub` and `constr_collect_eq` implement constraint collection
++ `solve_eq`, `solve_sub`, and `constr_solve` implement constraint solving
+Consistency functions, and the ones that mimic them, also have versions that work on
+modalities.

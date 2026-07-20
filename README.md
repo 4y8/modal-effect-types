@@ -7,7 +7,7 @@ et al. "Modal effect types." Proceedings of the ACM on Programming Languages
 Capabilities as Modal Effects." Proceedings of the ACM on Programming Languages
 10.POPL (2026): 923-950. The language has value and effect polymorphism. All
 type applications are explicit, other branches contain experiments with
-inference.
+inference. The frost branch is the most usable one.
 
 This program type checks and interprets source programs.
 

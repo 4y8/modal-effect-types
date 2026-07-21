@@ -1,5 +1,5 @@
 An implementation of an ML-like language based on modal effect types and Fresco
-type inference.
+type inference. This interpreter also has a [web interface](https://www.normalesup.org/~boussaa/met/playground/).
 
 ## Building
 This interpreter is written in OCaml and uses the dune build system. It uses the
